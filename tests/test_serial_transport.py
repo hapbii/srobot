@@ -1,5 +1,6 @@
 import sys
 import unittest
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -9,6 +10,36 @@ from serial_transport import ArduinoSerialManager
 
 
 class SerialResourceTests(unittest.TestCase):
+    def test_shutdown_cancels_and_joins_read_before_closing_fd(self):
+        entered, released = threading.Event(), threading.Event()
+        class BlockingSerial:
+            is_open = True
+            out_waiting = 0
+            reading = False
+            closed_during_read = False
+            def read(self, size):
+                self.reading = True
+                entered.set()
+                released.wait(2)
+                self.reading = False
+                return b''
+            def write(self, payload): return len(payload)
+            def cancel_read(self): released.set()
+            def close(self):
+                self.closed_during_read |= self.reading
+                self.is_open = False
+        port = BlockingSerial()
+        transport = ArduinoSerialManager()
+        transport._serials['j1'] = port
+        reader = threading.Thread(target=transport._read, args=('j1', port))
+        transport._threads['j1'] = reader
+        reader.start()
+        self.assertTrue(entered.wait(1))
+        transport.close()
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(port.closed_during_read)
+        self.assertFalse(port.is_open)
+
     def test_discovery_does_not_reopen_an_active_port(self):
         transport = ArduinoSerialManager()
         existing = Mock(is_open=True, port='COM3')

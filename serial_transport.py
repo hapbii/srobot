@@ -121,8 +121,14 @@ class ArduinoSerialManager:
                             buf.append(value)
         except (OSError, serial.SerialException):
             pass
+        except TypeError:
+            # pyserial's POSIX reader may observe fd=None after a concurrent
+            # write-error close. Treat a closed device as a disconnect only.
+            if ser.is_open and not self._closing.is_set():
+                raise
         finally:
-            ser.close()
+            if not self._closing.is_set():
+                ser.close()
             if self._dashboard:
                 self._dashboard.set_arduino(axis, False)
             self._on_line(axis, 'DISCONNECTED')
@@ -177,11 +183,19 @@ class ArduinoSerialManager:
                     time.sleep(0.005)
             except (OSError, serial.SerialException):
                 pass
-            ser.close()
+            cancel = getattr(ser, 'cancel_read', None)
+            if cancel:
+                try:
+                    cancel()
+                except (OSError, serial.SerialException):
+                    pass
         if self._reconnector and self._reconnector is not threading.current_thread():
             self._reconnector.join(timeout=5)
         for thread in tuple(self._threads.values()):
             if thread is not threading.current_thread():
                 thread.join(timeout=1)
+        # Readers have left read() before the manager releases their fd.
+        for ser in tuple(self._serials.values()):
+            ser.close()
         self._threads.clear()
         self._serials.clear()
