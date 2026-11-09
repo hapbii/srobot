@@ -1,0 +1,3343 @@
+  <!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>SCARA Robot 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      background: #0a0a0f; color: #cdd;
+      font-family: 'Courier New', monospace;
+      overflow: hidden; height: 100%; width: 100%;
+      touch-action: none; /* 브라우저 기본 터치 제스처 비활성화 */
+    }
+    canvas { display: block; position: fixed; top: 0; left: 0; }
+
+    /* ── 데스크탑 UI (사이드 패널) ── */
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(10,10,20,0.92);
+      border: 1px solid rgba(80,140,255,0.35);
+      border-radius: 10px; padding: 14px 16px; min-width: 210px;
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+
+    /* ── 모바일 UI (바텀 드로어) ── */
+    @media (max-width: 640px) {
+      #ui {
+        top: auto; left: 0; right: 0; bottom: 0;
+        min-width: unset; width: 100%;
+        border-radius: 16px 16px 0 0;
+        padding: 0 16px 20px;
+        border: none;
+        border-top: 1px solid rgba(80,140,255,0.3);
+        transform: translateY(calc(100% - 52px)); /* 핸들만 보임 */
+        transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+        max-height: 85vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      #ui.expanded { transform: translateY(0); }
+
+      /* 드로어 핸들 */
+      #drawerHandle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px 0 8px;
+        cursor: pointer;
+        user-select: none;
+        touch-action: none;
+        flex-shrink: 0;
+        position: sticky; top: 0;
+        background: rgba(10,10,20,0.95);
+        z-index: 1;
+        border-radius: 16px 16px 0 0;
+      }
+      #drawerHandle::before {
+        content: '';
+        display: block;
+        width: 36px; height: 4px;
+        border-radius: 2px;
+        background: rgba(80,140,255,0.45);
+      }
+      #drawerHandle .handle-label {
+        position: absolute;
+        right: 16px;
+        font-size: 10px;
+        color: #88aaff;
+        letter-spacing: 0.1em;
+      }
+    }
+    @media (min-width: 641px) {
+      #drawerHandle { display: none; }
+    }
+
+    #ui h2 {
+      font-size: 12px; color: #88aaff;
+      letter-spacing: 0.15em; margin-bottom: 12px;
+      border-bottom: 1px solid rgba(80,140,255,0.2);
+      padding-bottom: 8px; padding-top: 4px;
+    }
+    @media (max-width: 640px) {
+      #ui h2 { font-size: 11px; margin-bottom: 10px; }
+    }
+
+    .ctrl { margin-bottom: 11px; }
+    .ctrl-label { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #889; margin-bottom: 4px; gap: 4px; }
+    .ctrl-label .ctrl-name { flex: 1; }
+    .ctrl-label .ctrl-val  { color: #aac; flex-shrink: 0; }
+
+    /* 추적 토글 버튼 */
+    .track-toggle {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 6px; border-radius: 4px; cursor: pointer;
+      font-family: 'Courier New', monospace; font-size: 9px;
+      letter-spacing: 0.05em; transition: all 0.15s;
+      border: 1px solid rgba(80,140,255,0.25);
+      background: rgba(80,140,255,0.06); color: #4466aa;
+      user-select: none; flex-shrink: 0; white-space: nowrap;
+    }
+    .track-toggle::before { content: '○'; font-size: 8px; margin-right: 2px; }
+    .track-toggle.on {
+      background: rgba(80,255,160,0.12);
+      border-color: rgba(80,255,160,0.45); color: #44ddaa;
+    }
+    .track-toggle.on::before { content: '●'; color: #44ffaa; }
+    .ctrl.track-off input[type=range] { opacity: 0.45; }   /* 슬라이더 드래그는 여전히 가능 */
+    .ctrl.track-off .ctrl-name { color: #556 !important; }
+    .ctrl.track-off .ctrl-val  { color: #445 !important; }
+
+    /* 모바일에서 슬라이더 터치 영역 확대 */
+    input[type=range] {
+      width: 100%; accent-color: #4466ff; cursor: pointer;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(80,140,255,0.2);
+      border-radius: 2px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: #4466ff;
+      cursor: pointer;
+      box-shadow: 0 0 6px rgba(80,140,255,0.5);
+    }
+    @media (max-width: 640px) {
+      input[type=range]::-webkit-slider-thumb {
+        width: 26px; height: 26px; /* 터치 타겟 확대 */
+      }
+    }
+
+    /* 버튼 그리드 (모바일에서 2열) */
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .btn-grid .btn-full { grid-column: 1 / -1; }
+
+    .btn {
+      padding: 8px 6px;
+      border-radius: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; cursor: pointer;
+      letter-spacing: 0.06em;
+      transition: all 0.2s;
+      min-height: 36px; /* 터치 타겟 최소 높이 */
+    }
+    @media (max-width: 640px) {
+      .btn { min-height: 44px; font-size: 12px; } /* iOS 권장 44px */
+    }
+    #modeBtn { background: rgba(80,140,255,0.15); border: 1px solid rgba(80,140,255,0.45); color: #88aaff; }
+    #modeBtn.active { background: rgba(80,255,160,0.15); border-color: rgba(80,255,160,0.5); color: #44ffaa; }
+    #animBtn { background: rgba(80,140,255,0.15); border: 1px solid rgba(80,140,255,0.45); color: #88aaff; }
+    #animBtn.active { background: rgba(255,160,60,0.15); border-color: rgba(255,160,60,0.5); color: #ffaa44; }
+    #resetBtn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); color: #778; }
+
+    /* IK 상태 */
+    #ikStatus {
+      margin-top: 10px; padding: 6px 8px; border-radius: 5px;
+      font-size: 10px; letter-spacing: 0.08em;
+      background: rgba(80,255,160,0.08); border: 1px solid rgba(80,255,160,0.2);
+      color: #44cc88; text-align: center; display: none;
+    }
+    #ikStatus.limited { background: rgba(255,160,60,0.08); border-color: rgba(255,160,60,0.3); color: #ffaa44; }
+    #ikStatus.unreachable { background: rgba(255,60,60,0.08); border-color: rgba(255,60,60,0.3); color: #ff6666; }
+
+    /* 크로스헤어 (데스크탑만) */
+    #crosshair {
+      position: fixed; pointer-events: none; display: none;
+      width: 24px; height: 24px; transform: translate(-50%, -50%);
+      transition: transform 0.12s ease;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute;
+      background: rgba(80,255,160,0.75);
+      transition: background 0.2s, width 0.2s, height 0.2s;
+    }
+    #crosshair::before { width: 1px; height: 24px; left: 50%; top: 0; }
+    #crosshair::after  { width: 24px; height: 1px; left: 0; top: 50%; }
+
+    /* 고정 상태: 크로스헤어가 황금색 + 커짐 */
+    #crosshair.locked::before,
+    #crosshair.locked::after { background: rgba(255,200,60,0.9); }
+    #crosshair.locked { transform: translate(-50%, -50%) scale(1.4); }
+
+    /* Shift 선형이동 상태: 크로스헤어가 하늘색 + 세로만 길어짐 */
+    #crosshair.shift::before { background: rgba(60,200,255,0.9); height: 40px; }
+    #crosshair.shift::after  { background: rgba(60,200,255,0.5); width: 10px; }
+    #crosshair.shift { transform: translate(-50%, -50%) scaleY(1.3); }
+
+    /* 고정 잠금 마커 (고정됐을 때 위치 핀) */
+    #lockPin {
+      position: fixed; pointer-events: none; display: none;
+      width: 14px; height: 14px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: rgba(255,200,60,0.9);
+      box-shadow: 0 0 10px rgba(255,200,60,0.6), 0 0 20px rgba(255,200,60,0.3);
+      animation: lockPulse 1.4s ease-in-out infinite;
+    }
+    #lockPin::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    @keyframes lockPulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(255,200,60,0.6); }
+      50%       { box-shadow: 0 0 18px rgba(255,200,60,0.9), 0 0 32px rgba(255,200,60,0.4); }
+    }
+
+    /* 고정 상태 배지 */
+    #lockBadge {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(255,200,60,0.12);
+      border: 1px solid rgba(255,200,60,0.5);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 10px; letter-spacing: 0.1em;
+      color: #ffc83c;
+      display: none;
+      pointer-events: none;
+      backdrop-filter: blur(6px);
+      animation: badgeFadeIn 0.2s ease;
+    }
+    @keyframes badgeFadeIn { from { opacity:0; transform: translateY(-4px); } to { opacity:1; transform: none; } }
+
+    /* 핑거 터치 마커 (모바일 IK용) */
+    #touchMarker {
+      position: fixed; pointer-events: none; display: none;
+      width: 48px; height: 48px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 2px solid rgba(80,255,160,0.7);
+      background: rgba(80,255,160,0.1);
+    }
+    #touchMarker::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: rgba(80,255,160,0.8);
+    }
+
+    /* 힌트 텍스트 */
+    #info {
+      position: fixed; bottom: 60px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px; color: #334; letter-spacing: 0.08em;
+      white-space: nowrap; pointer-events: none;
+    }
+    @media (max-width: 640px) {
+      #info {
+        bottom: 62px;
+        font-size: 9px;
+        color: #2a3344;
+      }
+    }
+
+    /* 모바일 제스처 힌트 오버레이 (최초 1회) */
+    #gestureHint {
+      position: fixed; inset: 0;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7);
+      z-index: 200; flex-direction: column; gap: 20px;
+      pointer-events: none;
+    }
+    #gestureHint.show { display: flex; }
+    .hint-item { text-align: center; color: #88aaff; font-size: 13px; line-height: 1.6; }
+    .hint-icon { font-size: 28px; display: block; margin-bottom: 4px; }
+
+    /* 퍼포먼스 표시 (개발 모드) */
+    #perfBadge {
+      position: fixed; top: 8px; right: 8px;
+      font-size: 9px; color: #334; letter-spacing: 0.05em;
+      z-index: 50; pointer-events: none;
+    }
+
+  /* ══ 웨이포인트 패널 ══ */
+    #waypointPanel {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(10,10,20,0.92);
+      border: 1px solid rgba(120,80,255,0.4);
+      border-radius: 10px; padding: 12px 14px;
+      min-width: 190px; max-width: 220px;
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      font-family: 'Courier New', monospace;
+    }
+    #waypointPanel h3 {
+      font-size: 10px; color: #aa88ff;
+      letter-spacing: 0.15em; margin-bottom: 10px;
+      border-bottom: 1px solid rgba(120,80,255,0.2);
+      padding-bottom: 6px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #waypointPanel h3 span { color: #665588; font-size: 9px; }
+    #wpList {
+      display: flex; flex-direction: column; gap: 5px;
+      max-height: 360px; overflow-y: auto; margin-bottom: 8px;
+    }
+    #wpList::-webkit-scrollbar { width: 3px; }
+    #wpList::-webkit-scrollbar-thumb { background: rgba(120,80,255,0.3); border-radius: 2px; }
+    .wp-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 7px; border-radius: 5px;
+      border: 1px solid rgba(120,80,255,0.2);
+      background: rgba(120,80,255,0.06);
+      cursor: pointer; transition: all 0.15s;
+      animation: wpAppear 0.25s ease;
+    }
+    @keyframes wpAppear { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:none} }
+    .wp-item:hover { background: rgba(120,80,255,0.14); border-color: rgba(120,80,255,0.5); }
+    .wp-item.active { background: rgba(120,80,255,0.22); border-color: rgba(160,120,255,0.7);
+                      box-shadow: 0 0 8px rgba(120,80,255,0.3); }
+    .wp-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
+    .wp-label { flex: 1; font-size: 10px; color: #aac; letter-spacing: 0.06em; }
+    .wp-label small { display: block; font-size: 8px; color: #556; margin-top: 1px; }
+    .wp-del { font-size: 11px; color: #445; cursor: pointer; padding: 0 2px; transition: color 0.15s; line-height: 1; }
+    .wp-del:hover { color: #f66; }
+    .wp-btn-row { display: flex; gap: 5px; }
+    .wp-btn {
+      flex: 1; padding: 6px 4px; border-radius: 5px;
+      font-family: 'Courier New', monospace; font-size: 10px;
+      cursor: pointer; letter-spacing: 0.05em; transition: all 0.2s; min-height: 30px;
+    }
+    #wpRunBtn { background: rgba(120,80,255,0.15); border: 1px solid rgba(120,80,255,0.5); color: #aa88ff; }
+    #wpRunBtn:disabled { opacity: 0.35; cursor: default; }
+    #wpRunBtn.running { background: rgba(255,160,60,0.15); border-color: rgba(255,160,60,0.5); color: #ffaa44; }
+    #wpGhostBtn { background: rgba(80,200,255,0.12); border: 1px solid rgba(80,200,255,0.4); color: #66ccff; max-width: 72px; }
+    #wpGhostBtn.off { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); color: #446; }
+    #wpClearBtn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); color: #556; max-width: 36px; }
+    #wpToast {
+      position: fixed; left: 50%; bottom: 80px;
+      transform: translateX(-50%) translateY(10px);
+      background: rgba(120,80,255,0.18); border: 1px solid rgba(120,80,255,0.5);
+      border-radius: 6px; padding: 6px 14px;
+      font-size: 10px; color: #bb99ff; letter-spacing: 0.08em;
+      pointer-events: none; opacity: 0; transition: opacity 0.3s, transform 0.3s;
+      white-space: nowrap; z-index: 200;
+    }
+    #wpToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .wp-speed-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .wp-speed-row label { font-size: 9px; color: #556; white-space: nowrap; }
+    .wp-speed-row input { flex: 1; }
+
+    /* ══ 캐리어 박스 패널 ══ */
+    #carrierPanel {
+      position: fixed; bottom: 16px; left: 16px;
+      background: rgba(10,10,20,0.92);
+      border: 1px solid rgba(60,180,255,0.4);
+      border-radius: 10px; padding: 12px 14px;
+      min-width: 190px; max-width: 220px;
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      font-family: 'Courier New', monospace;
+      display: none;
+      animation: carrierFadeIn 0.3s ease;
+    }
+    @keyframes carrierFadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+    #carrierPanel h3 {
+      font-size: 10px; color: #55ccff;
+      letter-spacing: 0.15em; margin-bottom: 10px;
+      border-bottom: 1px solid rgba(60,180,255,0.2);
+      padding-bottom: 6px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #carrierPanel h3 span { color: #336; font-size: 9px; }
+    #carrierList {
+      display: flex; flex-direction: column; gap: 5px;
+      max-height: 220px; overflow-y: auto; margin-bottom: 8px;
+    }
+    #carrierList::-webkit-scrollbar { width: 3px; }
+    #carrierList::-webkit-scrollbar-thumb { background: rgba(60,180,255,0.3); border-radius: 2px; }
+    .carrier-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 7px; border-radius: 5px;
+      border: 1px solid rgba(60,180,255,0.2);
+      background: rgba(60,180,255,0.06);
+      animation: carrierItemAppear 0.25s ease;
+    }
+    @keyframes carrierItemAppear { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:none} }
+    .carrier-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: #44aaff; box-shadow: 0 0 5px #44aaff; }
+    .carrier-label { flex: 1; font-size: 10px; color: #aac; letter-spacing: 0.06em; }
+    .carrier-label small { display: block; font-size: 8px; color: #556; margin-top: 1px; }
+    .carrier-del { font-size: 11px; color: #445; cursor: pointer; padding: 0 2px; transition: color 0.15s; line-height: 1; }
+    .carrier-del:hover { color: #f66; }
+
+    /* 슬롯 그리드 */
+    .carrier-slots {
+      display: flex; flex-wrap: wrap; gap: 3px;
+      margin-top: 5px; padding: 4px 0 2px;
+    }
+    .carrier-slot-cell {
+      width: 16px; height: 16px; border-radius: 3px;
+      border: 1px solid rgba(60,180,255,0.2);
+      background: rgba(60,180,255,0.04);
+      cursor: pointer; transition: all 0.12s;
+      position: relative;
+    }
+    .carrier-slot-cell.filled {
+      background: rgba(100,140,255,0.28);
+      border-color: rgba(100,140,255,0.6);
+    }
+    .carrier-slot-cell.selected {
+      border-color: #44ccff;
+      box-shadow: 0 0 5px #44ccff88;
+      background: rgba(60,200,255,0.22);
+    }
+    .carrier-slot-cell.filled.selected {
+      border-color: #ffaa44;
+      box-shadow: 0 0 5px #ffaa4488;
+    }
+    .carrier-btn-row { display: flex; gap: 5px; }
+    .carrier-btn {
+      flex: 1; padding: 6px 4px; border-radius: 5px;
+      font-family: 'Courier New', monospace; font-size: 10px;
+      cursor: pointer; letter-spacing: 0.05em;
+      transition: all 0.2s; min-height: 30px;
+    }
+    #carrierClearBtn {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.1); color: #556;
+      max-width: 36px;
+    }
+    #carrierClearBtn:hover { border-color: rgba(255,100,100,0.4); color: #f66; }
+    #carrierLoadBtn {
+      background: rgba(60,180,255,0.12);
+      border: 1px solid rgba(60,180,255,0.4); color: #55aacc;
+    }
+    #carrierLoadBtn:hover { background: rgba(60,180,255,0.22); }
+    #carrierLoadBtn:disabled { opacity: 0.3; cursor: default; }
+
+    /* ══ 공통 최소화 버튼 ══ */
+    .panel-min-btn {
+      width: 18px; height: 18px; border-radius: 4px;
+      background: transparent; border: 1px solid rgba(255,255,255,0.1);
+      color: #445; font-size: 13px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; line-height: 1; flex-shrink: 0;
+      margin-left: 6px; padding: 0;
+    }
+    .panel-min-btn:hover { background: rgba(255,255,255,0.08); color: #aac; }
+
+    /* ══ 공통 복원 탭 ══ */
+    .panel-tab {
+      position: fixed;
+      background: rgba(10,10,20,0.92);
+      backdrop-filter: blur(6px);
+      cursor: pointer; z-index: 150;
+      display: none;
+      writing-mode: vertical-rl;
+      font-family: 'Courier New', monospace;
+      font-size: 9px; letter-spacing: 0.12em;
+      align-items: center; gap: 5px;
+      transition: opacity 0.2s;
+      animation: tabIn 0.22s ease;
+    }
+    @keyframes tabIn { from{opacity:0;transform:translateX(12px)} to{opacity:1;transform:none} }
+    .panel-tab.left-tab {
+      animation-name: tabInLeft;
+      border-radius: 0 8px 8px 0;
+      border: 1px solid; border-left: none;
+      padding: 10px 8px 10px 10px;
+    }
+    @keyframes tabInLeft { from{opacity:0;transform:translateX(-12px)} to{opacity:1;transform:none} }
+    .panel-tab.right-tab {
+      border-radius: 8px 0 0 8px;
+      border: 1px solid; border-right: none;
+      padding: 10px 10px 10px 8px;
+      right: 0;
+    }
+    .panel-tab:hover { opacity: 0.85; }
+    .tab-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      display: block; margin: 0 auto 3px;
+    }
+
+    /* 웨이포인트 탭 색 */
+    #wpTab { border-color: rgba(120,80,255,0.45); color: #aa88ff; left: 0; }
+    #wpTab .tab-dot { background: #aa88ff; box-shadow: 0 0 5px #aa88ff55; }
+
+    /* 캐리어 탭 색 */
+    #carrierTab { border-color: rgba(60,180,255,0.45); color: #44aaff; bottom: 16px; left: 0; }
+    #carrierTab .tab-dot { background: #44aaff; box-shadow: 0 0 5px #44aaff55; }
+
+    /* HW 탭 색 */
+    #hwTab { border-color: rgba(80,200,255,0.45); color: #44ccff; top: 16px; }
+    #hwTab .tab-dot { background: #44ccff; box-shadow: 0 0 5px #44ccff55; }
+
+    /* 최소화된 패널은 내용 숨김 */
+    .panel-minimized > *:not(h3):not(h2) { display: none !important; }
+    .panel-minimized { padding-bottom: 12px !important; }
+
+    /* ══ 블록 코딩 열기 버튼 ══ */
+    #blockCodingBtn {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 200;
+      background: rgba(10,10,20,0.92);
+      border: 1px solid rgba(80,220,160,0.5);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: #44ffaa;
+      cursor: pointer;
+      letter-spacing: 0.1em;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 40px;
+      box-shadow: 0 0 14px rgba(60,220,140,0.15);
+    }
+    #blockCodingBtn:hover {
+      background: rgba(60,220,140,0.12);
+      border-color: rgba(80,255,180,0.8);
+      box-shadow: 0 0 22px rgba(60,220,140,0.3);
+      transform: translateY(-1px);
+    }
+    #blockCodingBtn .bc-icon {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px;
+      width: 16px; height: 16px;
+    }
+    #blockCodingBtn .bc-icon span {
+      border-radius: 2px;
+      display: block;
+    }
+    #blockCodingBtn .bc-icon span:nth-child(1) { background: #ff6b6b; }
+    #blockCodingBtn .bc-icon span:nth-child(2) { background: #ffa94d; }
+    #blockCodingBtn .bc-icon span:nth-child(3) { background: #4dabf7; }
+    #blockCodingBtn .bc-icon span:nth-child(4) { background: #69db7c; }
+
+  /* ══ 조작 가이드 모달 ══ */
+  #helpModalOverlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(4px);
+    z-index: 500;
+    display: flex; align-items: center; justify-content: center;
+    animation: helpOverlayIn 0.2s ease;
+  }
+  #helpModalOverlay.hidden { display: none; }
+  @keyframes helpOverlayIn { from{opacity:0} to{opacity:1} }
+
+  #helpModal {
+    background: rgba(8,8,22,0.97);
+    border: 1px solid rgba(80,140,255,0.4);
+    border-radius: 14px;
+    padding: 22px 26px 20px;
+    min-width: 340px; max-width: 480px; width: 90vw;
+    max-height: 80vh; overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    position: relative;
+    box-shadow: 0 0 40px rgba(40,80,255,0.18), 0 8px 40px rgba(0,0,0,0.6);
+    animation: helpModalIn 0.22s cubic-bezier(0.34,1.4,0.64,1);
+  }
+  @keyframes helpModalIn { from{opacity:0;transform:scale(0.92)} to{opacity:1;transform:scale(1)} }
+
+  #helpModal::-webkit-scrollbar { width: 4px; }
+  #helpModal::-webkit-scrollbar-thumb { background: rgba(80,140,255,0.3); border-radius: 2px; }
+
+  #helpModalClose {
+    position: absolute; top: 12px; right: 14px;
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #667; font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; line-height: 1;
+  }
+  #helpModalClose:hover { background: rgba(255,80,80,0.15); border-color: rgba(255,80,80,0.4); color: #f88; }
+
+  #helpModal h2 {
+    font-size: 11px; color: #88aaff; letter-spacing: 0.18em;
+    margin-bottom: 16px; padding-bottom: 10px;
+    border-bottom: 1px solid rgba(80,140,255,0.2);
+    padding-right: 30px;
+  }
+
+  .help-section { margin-bottom: 16px; }
+  .help-section-title {
+    font-size: 9px; color: #4466cc; letter-spacing: 0.2em;
+    margin-bottom: 8px; text-transform: uppercase;
+  }
+  .help-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .help-key {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(80,140,255,0.1);
+    border: 1px solid rgba(80,140,255,0.35);
+    border-radius: 5px;
+    font-size: 10px; color: #88aaff; letter-spacing: 0.05em;
+    padding: 2px 7px; min-width: 42px; min-height: 22px;
+    white-space: nowrap; flex-shrink: 0;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.4);
+  }
+  .help-key.mouse {
+    background: rgba(80,255,160,0.08);
+    border-color: rgba(80,255,160,0.3);
+    color: #44cc88;
+  }
+  .help-key.click {
+    background: rgba(255,200,60,0.08);
+    border-color: rgba(255,200,60,0.3);
+    color: #ffc83c;
+  }
+  .help-desc {
+    font-size: 10px; color: #8899aa; line-height: 1.55; letter-spacing: 0.04em;
+  }
+  .help-desc b { color: #aabbcc; font-weight: normal; }
+  .help-divider {
+    border: none; border-top: 1px solid rgba(80,140,255,0.1);
+    margin: 12px 0;
+  }
+
+  /* 상단 도움말 열기 버튼 */
+  #helpOpenBtn {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(8,8,22,0.88);
+    border: 1px solid rgba(80,140,255,0.35);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-family: 'Courier New', monospace;
+    font-size: 10px; color: #6688cc; letter-spacing: 0.12em;
+    cursor: pointer; z-index: 300;
+    backdrop-filter: blur(6px);
+    transition: all 0.2s;
+    display: none;
+    animation: helpBtnIn 0.25s ease;
+    white-space: nowrap;
+  }
+  @keyframes helpBtnIn { from{opacity:0;transform:translateX(-50%) translateY(-6px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  #helpOpenBtn:hover { background: rgba(40,60,140,0.88); border-color: rgba(80,140,255,0.65); color: #99bbff; }
+
+  /* ══════════════════════════════════════
+     HW CONTROLLER PANEL (from launcher)
+  ══════════════════════════════════════ */
+  #hwPanel {
+    position: fixed; top: 16px; right: 16px;
+    background: rgba(6,6,20,0.95);
+    border: 1px solid rgba(80,200,255,0.35);
+    border-radius: 12px; padding: 14px 16px;
+    min-width: 260px; max-width: 300px;
+    backdrop-filter: blur(10px);
+    z-index: 200; font-size: 11px;
+    font-family: 'Courier New', monospace;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  #hwPanel h3 {
+    font-size: 11px; color:#44ccff; letter-spacing:.15em;
+    border-bottom: 1px solid rgba(80,200,255,0.2);
+    padding-bottom:6px; margin-bottom:10px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .hw-badge { font-size:9px; padding:2px 7px; border-radius:4px; letter-spacing:.08em; }
+  .hw-badge.sim  { background:rgba(80,140,255,0.2); color:#88aaff; border:1px solid rgba(80,140,255,0.4); }
+  .hw-badge.real { background:rgba(80,255,140,0.2); color:#44ff88; border:1px solid rgba(80,255,140,0.4); }
+  .hw-badge.err  { background:rgba(255,80,80,0.2);  color:#ff6666; border:1px solid rgba(255,80,80,0.4); }
+  #bleStatus {
+    display:flex; align-items:center; gap:5px;
+    font-size:9px; color:#445; margin-bottom:8px;
+    padding:4px 6px; border-radius:4px; background:rgba(0,0,0,0.3);
+  }
+  #bleDot { width:7px; height:7px; border-radius:50%; background:#333; transition:background .3s; flex-shrink:0; }
+  #bleDot.scanning  { background:#ffaa44; animation:blePulse .8s infinite; }
+  #bleDot.connected { background:#44ff88; box-shadow:0 0 5px #44ff8888; }
+  #bleDot.error     { background:#ff4444; }
+  @keyframes blePulse { 0%,100%{opacity:1} 50%{opacity:.2} }
+  .axis-row {
+    display:grid; grid-template-columns:28px 1fr 60px 50px;
+    align-items:center; gap:4px; margin-bottom:6px;
+    padding:4px 6px; border-radius:5px;
+    background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);
+  }
+  .axis-label { color:#556; font-size:10px; font-weight:bold; }
+  .axis-bar-wrap { background:rgba(0,0,0,0.3); border-radius:2px; height:5px; overflow:hidden; }
+  .axis-bar { height:100%; border-radius:2px; transition:width .1s; }
+  .axis-bar.j1 { background:linear-gradient(90deg,#4488ff,#88ccff); }
+  .axis-bar.j2 { background:linear-gradient(90deg,#44ffaa,#88ffcc); }
+  .axis-val  { text-align:right; color:#aac; font-size:10px; }
+  .axis-pwm  { text-align:right; color:#556; font-size:9px; }
+  .enc-row {
+    display:flex; justify-content:space-between;
+    font-size:9px; color:#445; margin-bottom:3px; padding:0 2px;
+  }
+  .enc-row span:last-child { color:#667; }
+  .magnet-row { display:flex; gap:6px; margin-top:8px; justify-content:center; }
+  .magnet-dot { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .magnet-dot span:first-child { width:10px; height:10px; border-radius:50%; border:1px solid #333; }
+  .magnet-dot span:last-child  { font-size:8px; color:#445; }
+  .mag-ok   { background:#44ff88 !important; box-shadow:0 0 5px #44ff88; }
+  .mag-weak { background:#ffaa44 !important; }
+  .mag-none { background:#ff4444 !important; }
+  .hw-btn-row { display:flex; gap:6px; margin-top:10px; }
+  .hw-btn {
+    flex:1; padding:6px; border-radius:5px; cursor:pointer;
+    font-family:'Courier New',monospace; font-size:10px;
+    letter-spacing:.06em; transition:all .2s; border:none;
+  }
+  #btnConnect         { background:rgba(80,200,255,0.12); border:1px solid rgba(80,200,255,0.4); color:#44ccff; }
+  #btnConnect.connected { background:rgba(80,255,140,0.12); border-color:rgba(80,255,140,0.4); color:#44ff88; }
+  #btnStart           { background:rgba(120,80,255,0.12); border:1px solid rgba(120,80,255,0.4); color:#aa88ff; }
+  #btnStart.running   { background:rgba(255,160,60,0.12); border-color:rgba(255,160,60,0.4); color:#ffaa44; }
+  #btnMode            { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); color:#667; font-size:9px; }
+  #bleWarning {
+    display:none; margin-bottom:8px; padding:6px 8px;
+    background:rgba(255,100,50,0.12); border:1px solid rgba(255,100,50,0.35);
+    border-radius:5px; font-size:9px; color:#ff8866; line-height:1.6;
+  }
+  #hwLog {
+    margin-top:8px; padding:5px; border-radius:4px;
+    background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.05);
+    height:52px; overflow-y:auto; font-size:9px; color:#445; line-height:1.5;
+  }
+  #hwLog::-webkit-scrollbar { width:2px; }
+  #hwLog::-webkit-scrollbar-thumb { background:#223; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="crosshair"></div>
+<div id="lockPin"></div>
+<div id="lockBadge">🔒 위치 고정</div>
+<div id="touchMarker"></div>
+
+<!-- 모바일 제스처 힌트 -->
+<div id="gestureHint">
+  <div class="hint-item"><span class="hint-icon">☝️</span>한 손가락 드래그<br>시점 회전</div>
+  <div class="hint-item"><span class="hint-icon">🤏</span>두 손가락 핀치<br>줌 인/아웃</div>
+  <div class="hint-item"><span class="hint-icon">👆</span>터치 추적 ON 후<br>손가락으로 로봇 제어</div>
+</div>
+
+<div id="perfBadge"></div>
+
+<!-- ══ 조작 가이드 열기 버튼 (모달 닫은 후 표시) ══ -->
+<button id="helpOpenBtn">❓ 조작 가이드 &nbsp;[i]</button>
+
+<!-- ══ 조작 가이드 모달 ══ -->
+<div id="helpModalOverlay">
+  <div id="helpModal">
+    <button id="helpModalClose" title="닫기">✕</button>
+    <h2>⌨ SCARA ROBOT — 조작 가이드</h2>
+
+    <div class="help-section">
+      <div class="help-section-title">🖱 마우스 / 터치</div>
+      <div class="help-row">
+        <span class="help-key mouse">드래그</span>
+        <span class="help-desc">시점 <b>회전</b> — 마우스 좌클릭+드래그 (데스크탑) / 한 손가락 스와이프 (모바일)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key mouse">스크롤</span>
+        <span class="help-desc">카메라 <b>줌 인/아웃</b> — 마우스 휠 (데스크탑) / 두 손가락 핀치 (모바일)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key click">우클릭</span>
+        <span class="help-desc">현재 위치를 <b>웨이포인트로 저장</b> (추적 모드 ON 시 마우스 커서 위치 저장)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key click">좌클릭</span>
+        <span class="help-desc">추적 모드 ON 시 현재 위치 <b>잠금/해제</b> (황금색 크로스헤어 = 고정 상태)<br>캐리어 클릭 시 <b>캐리어 선택</b> / 드래그로 <b>Y축 회전</b></span>
+      </div>
+    </div>
+
+    <hr class="help-divider">
+
+    <div class="help-section">
+      <div class="help-section-title">⌨ 키보드 단축키</div>
+      <div class="help-row">
+        <span class="help-key">T</span>
+        <span class="help-desc"><b>마우스/터치 추적 모드</b> ON / OFF 전환 — 로봇이 커서를 따라 움직입니다</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">Shift</span>
+        <span class="help-desc">추적 ON 상태에서 <b>Shift 누른 채 V 또는 H</b>를 눌러 선형이동 모드 진입</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">Shift+V</span>
+        <span class="help-desc">그리퍼 방향 기준 <b>세로 선형이동</b> — 마우스 위/아래로 전진/후진</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">Shift+H</span>
+        <span class="help-desc">그리퍼 수직 방향 기준 <b>가로 선형이동</b> — 마우스 좌/우로 슬라이드</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">M</span>
+        <span class="help-desc">IK <b>팔꿈치 방향 반전</b> — 관절 2의 꺾이는 방향을 바꿉니다</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">O</span>
+        <span class="help-desc">그리퍼 앞에 <b>웨이퍼 캐리어 박스 생성</b></span>
+      </div>
+      <div class="help-row">
+        <span class="help-key">I</span>
+        <span class="help-desc">이 <b>조작 가이드</b> 열기 / 닫기</span>
+      </div>
+    </div>
+
+    <hr class="help-divider">
+
+    <div class="help-section">
+      <div class="help-section-title">🎛 슬라이더 & 버튼</div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">관절 1/2</span>
+        <span class="help-desc">상완·전완 각도 직접 조절 (–360° ~ +360°)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">관절 3 🔄</span>
+        <span class="help-desc">손목 회전 직접 조절 — 추적 모드 ON + <b>추적 버튼 ON</b> 시 마우스 방향으로 자동 회전</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">추적 버튼</span>
+        <span class="help-desc">각 관절 슬라이더 옆 버튼으로 <b>추적할 관절 선택</b> — OFF 관절은 현재 각도 고정</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">터치 추적</span>
+        <span class="help-desc">마우스/터치 IK 추적 모드 켜기 (= <b>T</b>키)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">애니메이션</span>
+        <span class="help-desc">자동 시연 애니메이션 재생 / 일시정지</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">↺ 리셋</span>
+        <span class="help-desc">모든 관절을 <b>초기 위치</b>로 되돌리기</span>
+      </div>
+    </div>
+
+    <hr class="help-divider">
+
+    <div class="help-section">
+      <div class="help-section-title">📍 웨이포인트 패널 (우측 상단)</div>
+      <div class="help-row">
+        <span class="help-key click">우클릭</span>
+        <span class="help-desc">현재 포즈를 웨이포인트에 <b>추가</b> (최대 50개)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">▶ 실행</span>
+        <span class="help-desc">저장된 순서대로 <b>순차 재생</b> — 속도 슬라이더로 속도 조절</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">👁 잔상</span>
+        <span class="help-desc">각 웨이포인트 위치의 <b>반투명 잔상</b> 표시 ON/OFF</span>
+      </div>
+    </div>
+
+    <hr class="help-divider">
+
+    <div class="help-section">
+      <div class="help-section-title">⬛ 블록 코딩 (좌측 하단 버튼)</div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:80px;font-size:9px">BLOCK PROGRAM</span>
+        <span class="help-desc"><b>새 창</b>으로 블록 코딩 에디터가 열립니다. 왼쪽 팔레트에서 블록을 <b>드래그</b>해 프로그램을 구성하고, <b>▶ 실행</b>을 누르면 이 창의 로봇이 블록 순서대로 동작합니다. 이미 열려 있으면 해당 창으로 포커스가 이동합니다.</span>
+      </div>
+    </div>
+
+    <hr class="help-divider">
+
+    <div class="help-section">
+      <div class="help-section-title">📦 웨이퍼 캐리어 (좌측 하단)</div>
+      <div class="help-row">
+        <span class="help-key">O</span>
+        <span class="help-desc">그리퍼 앞에 캐리어 <b>스폰</b></span>
+      </div>
+      <div class="help-row">
+        <span class="help-key click">클릭</span>
+        <span class="help-desc">3D 캐리어 클릭 → <b>선택</b> (드래그하면 Y축 회전)</span>
+      </div>
+      <div class="help-row">
+        <span class="help-key" style="min-width:60px;font-size:9px">📥 적재</span>
+        <span class="help-desc">선택된 캐리어 슬롯에 <b>웨이퍼 삽입</b> (슬롯 13개)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 웨이포인트 패널 -->
+<div id="waypointPanel">
+  <h3>WAYPOINTS <span id="wpCount">0 / 50</span><button class="panel-min-btn" id="wpMinBtn">–</button></h3>
+  <div id="wpList"></div>
+  <div class="wp-btn-row">
+    <button class="wp-btn" id="wpRunBtn" disabled>▶ 실행</button>
+    <button class="wp-btn" id="wpGhostBtn">👁 잔상 ON</button>
+    <button class="wp-btn" id="wpClearBtn">✕</button>
+  </div>
+  <div class="wp-speed-row">
+    <label>속도</label>
+    <input type="range" id="wpSpeed" min="1" max="10" value="2">
+    <span id="wpSpeedVal" style="font-size:9px;color:#776;min-width:10px">2</span>
+  </div>
+</div>
+<div id="wpToast"></div>
+
+<!-- 복원 탭들 -->
+<div id="wpTab"    class="panel-tab left-tab"><span class="tab-dot"></span>WAYPTS</div>
+<div id="carrierTab" class="panel-tab left-tab"><span class="tab-dot"></span>CARRIER</div>
+<div id="hwTab"    class="panel-tab right-tab"><span class="tab-dot"></span>HW CTRL</div>
+
+<!-- 웨이퍼 캐리어 박스 패널 -->
+<div id="carrierPanel">
+  <h3>WAFER CARRIER <span id="carrierCount">0 / 0</span><button class="panel-min-btn" id="carrierMinBtn">–</button></h3>
+  <div id="carrierList"></div>
+  <div class="carrier-btn-row">
+    <button class="carrier-btn" id="carrierLoadBtn">📥 웨이퍼 적재</button>
+    <button class="carrier-btn" id="carrierClearBtn">✕</button>
+  </div>
+</div>
+
+<!-- 블록 코딩 열기 버튼 -->
+<button id="blockCodingBtn" title="블록 코딩 에디터 열기">
+  <div class="bc-icon"><span></span><span></span><span></span><span></span></div>
+  BLOCK PROGRAM
+</button>
+
+<div id="ui">
+  <!-- 모바일 드로어 핸들 -->
+  <div id="drawerHandle">
+    <span class="handle-label">SCARA 제어</span>
+  </div>
+
+  <h2>SCARA ROBOT 3D</h2>
+  <div class="ctrl" id="ctrl-j1">
+    <div class="ctrl-label">
+      <span class="ctrl-name">관절 1 (상완)</span>
+      <button class="track-toggle on" id="trkJ1" title="추적 ON/OFF">추적</button>
+      <span class="ctrl-val" id="j1v">0°</span>
+    </div>
+    <input type="range" id="j1" min="-360" max="360" value="0">
+  </div>
+  <div class="ctrl" id="ctrl-j2">
+    <div class="ctrl-label">
+      <span class="ctrl-name">관절 2 (전완)</span>
+      <button class="track-toggle on" id="trkJ2" title="추적 ON/OFF">추적</button>
+      <span class="ctrl-val" id="j2v">180°</span>
+    </div>
+    <input type="range" id="j2" min="-360" max="360" value="180">
+  </div>
+  <div class="ctrl" id="ctrl-j3">
+    <div class="ctrl-label">
+      <span class="ctrl-name">관절 3 — 손목 </span>
+      <button class="track-toggle on" id="trkJ3" title="추적 ON/OFF">추적</button>
+      <span class="ctrl-val" id="j3v">0°</span>
+    </div>
+    <input type="range" id="j3" min="-180" max="180" value="0">
+  </div>
+
+  <!-- 마우스 추적 속도 조절 슬라이더 -->
+  <div class="ctrl" id="ctrl-track-smooth" style="margin-top: 15px; border-top: 1px solid rgba(80,140,255,0.15); padding-top: 10px;">
+    <div class="ctrl-label">
+      <span class="ctrl-name" style="color: #aaccff;">마우스 추적 속도</span>
+      <span class="ctrl-val" id="trackSmoothLabel" style="color: #66ffaa;">3</span>
+    </div>
+    <input type="range" id="trackSmoothSlider" min="1" max="10" value="3" step="1"
+      style="width:100%; accent-color:#66ffaa;"
+      oninput="document.getElementById('trackSmoothLabel').textContent=this.value">
+  </div>
+
+  <div class="btn-grid">
+    <button class="btn btn-full" id="modeBtn">👆 터치 추적 ON</button>
+    <button class="btn" id="animBtn">▶ 애니메이션</button>
+    <button class="btn" id="resetBtn">↺ 리셋</button>
+  </div>
+
+  <div id="ikStatus">IK 대기 중</div>
+</div>
+
+<div id="info">드래그: 시점 회전 &nbsp;|&nbsp; 스크롤: 줌</div>
+
+<script src="scara_core.js"></script>
+<script>
+// ── 디바이스 감지 ──
+const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent) || ('ontouchstart' in window);
+
+// ── 바텀 드로어 (모바일) ──
+const uiEl = document.getElementById('ui');
+const drawerHandle = document.getElementById('drawerHandle');
+const infoEl = document.getElementById('info');
+let drawerExpanded = false;
+
+if (isMobile) {
+  infoEl.textContent = '한손가락: 회전  |  두손가락: 줌';
+
+  // 드로어 핸들 탭 토글
+  drawerHandle.addEventListener('click', () => {
+    drawerExpanded = !drawerExpanded;
+    uiEl.classList.toggle('expanded', drawerExpanded);
+  });
+
+  // 드래그로 드로어 열기/닫기
+  let dragStartY = 0, dragStartExpanded = false;
+  drawerHandle.addEventListener('touchstart', e => {
+    dragStartY = e.touches[0].clientY;
+    dragStartExpanded = drawerExpanded;
+    e.stopPropagation();
+  }, { passive: true });
+  drawerHandle.addEventListener('touchend', e => {
+    const dy = e.changedTouches[0].clientY - dragStartY;
+    if (Math.abs(dy) > 30) {
+      drawerExpanded = dy < 0; // 위로 스와이프 = 열기
+      uiEl.classList.toggle('expanded', drawerExpanded);
+    }
+    e.stopPropagation();
+  }, { passive: true });
+
+  // 힌트 오버레이 (최초 1회)
+  const hint = document.getElementById('gestureHint');
+  const seen = sessionStorage.getItem('scaraHintSeen');
+  if (!seen) {
+    hint.classList.add('show');
+    setTimeout(() => {
+      hint.classList.remove('show');
+      sessionStorage.setItem('scaraHintSeen', '1');
+    }, 2800);
+  }
+} else {
+  document.getElementById('gestureHint').remove();
+}
+
+// ── Three.js 로드 ──
+const script = document.createElement('script');
+script.src = 'vendor/three.min.js';
+script.onload = initScene;
+script.onerror = () => {
+  document.body.innerHTML += '<div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#f66;font-family:monospace;text-align:center">Three.js 로드 실패<br>vendor/three.min.js 파일을 확인하세요</div>';
+};
+document.head.appendChild(script);
+
+function initScene() {
+  const sceneAbort = new AbortController();
+  const sceneTimers = new Set();
+  function later(fn, ms) { const id=setTimeout(()=>{sceneTimers.delete(id);fn();},ms);sceneTimers.add(id);return id; }
+  function listen(target,type,fn,options={}) { target.addEventListener(type,fn,{...options,signal:sceneAbort.signal}); }
+
+
+  // ════════════════════════════════
+  // 1. 모바일 품질 티어 결정
+  //    GPU/메모리 기반으로 자동 조절
+  // ════════════════════════════════
+  const perfBadge = document.getElementById('perfBadge');
+
+  // 논리 프로세서 수로 성능 추정
+  const cpuCores = navigator.hardwareConcurrency || 4;
+  const isLowEnd = isMobile && cpuCores <= 4;
+  const isMidEnd = isMobile && cpuCores <= 6;
+
+  const QUALITY = {
+    pixelRatio: isLowEnd ? 1.0 : isMidEnd ? Math.min(window.devicePixelRatio, 1.5) : Math.min(window.devicePixelRatio, 2),
+    shadowMap:  !isLowEnd,          // 저사양 모바일: 섀도우 OFF
+    shadowSize: isLowEnd ? 512 : isMidEnd ? 1024 : 2048,
+    cylSegs:    isLowEnd ? 10 : 16, // 원통 분할 수 감소
+    sphSegs:    isLowEnd ? 12 : 18, // 구 분할 수 감소
+    fog:        !isLowEnd,          // 저사양: 안개 OFF
+    cableSegs:  isLowEnd ? 12 : 24, // 케이블 세그먼트
+  };
+
+  perfBadge.textContent = isLowEnd ? 'LOW' : isMidEnd ? 'MID' : 'HIGH';
+
+  // ════════════════════════════════
+  // 2. 렌더러
+  // ════════════════════════════════
+  const canvas = document.getElementById('c');
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: !isLowEnd,
+    alpha: false,
+    powerPreference: isMobile ? 'low-power' : 'high-performance',
+  });
+  renderer.setPixelRatio(QUALITY.pixelRatio);
+  renderer.shadowMap.enabled = QUALITY.shadowMap;
+  if (QUALITY.shadowMap) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setClearColor(0x0a0a0f, 1);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.autoClear = false;
+
+  // ── RT 생성 헬퍼 ──
+  function makeRT(alpha = false) {
+    return new THREE.WebGLRenderTarget(
+      Math.floor(window.innerWidth  * QUALITY.pixelRatio),
+      Math.floor(window.innerHeight * QUALITY.pixelRatio),
+      { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat }
+    );
+  }
+
+  // 웨이포인트 잔상 전용 RT (잔상들을 하나로 합성)
+
+
+  // lock 잔상 전용 핑퐁 RT (rtA/rtB 는 lock 전용, wpGhost와 절대 공유 안 함)
+  let rtLockA = makeRT(), rtLockB = makeRT();
+  let lockFlip = false;
+
+  let ghostActive  = false;
+  let ghostOpacity = 0;
+  const GHOST_MAX   = 0.55;
+  const GHOST_DECAY = 0.018;
+
+  // 풀스크린 쿼드 공용 씬 (map만 바꿔서 재사용)
+  const overlayMat = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 1,
+    depthTest: false, depthWrite: false,
+    blending: THREE.NormalBlending,
+  });
+  const overlayQuad  = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), overlayMat);
+  const overlayScene = new THREE.Scene();
+  const overlayCam   = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  overlayScene.add(overlayQuad);
+
+  // ghostScene/ghostMat/ghostCam (lock용 - 기존 코드 호환)
+  const ghostMat   = overlayMat;
+  const ghostScene = overlayScene;
+  const ghostCam   = overlayCam;
+
+  function onResize() {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    rtLockA.dispose();   rtLockA   = makeRT();
+    rtLockB.dispose();   rtLockB   = makeRT();
+  }
+
+  // ════════════════════════════════
+  // 3. 씬 & 카메라
+  // ════════════════════════════════
+  const scene = new THREE.Scene();
+  if (QUALITY.fog) scene.fog = new THREE.FogExp2(0x0a0a0f, 0.028);
+
+  const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 500);
+  listen(window, 'resize', onResize);
+  let orientationResizeTimer = null;
+  listen(window, 'orientationchange', () => {
+    clearTimeout(orientationResizeTimer);
+    orientationResizeTimer = later(onResize, 300);
+  });
+
+  // ════════════════════════════════
+  // 4. 조명 (모바일 최적화: 광원 수 감소)
+  // ════════════════════════════════
+  scene.add(new THREE.AmbientLight(0x334466, isLowEnd ? 4.5 : 3)); // 저사양: 환경광 증가로 포인트 라이트 보완
+
+  const sun = new THREE.DirectionalLight(0xffffff, 3);
+  sun.position.set(8, 16, 8);
+  if (QUALITY.shadowMap) {
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(QUALITY.shadowSize, QUALITY.shadowSize);
+    sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 80;
+    sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
+    sun.shadow.camera.top = 20;   sun.shadow.camera.bottom = -20;
+  }
+  scene.add(sun);
+
+  // 저사양 모바일은 포인트 라이트 생략 (draw call 절약)
+  if (!isLowEnd) {
+    const rim = new THREE.PointLight(0x2244ff, 4, 60);
+    rim.position.set(-12, 10, -12);
+    scene.add(rim);
+
+    const fill = new THREE.PointLight(0x8899cc, 2, 40);
+    fill.position.set(10, 5, 10);
+    scene.add(fill);
+  }
+
+  // ════════════════════════════════
+  // 5. 재질
+  // ════════════════════════════════
+  // 저사양: MeshStandardMaterial → MeshLambertMaterial (PBR OFF)
+  function Mat(color, opts = {}) {
+    if (isLowEnd) {
+      return new THREE.MeshLambertMaterial({ color, ...opts });
+    }
+    return new THREE.MeshStandardMaterial({ color, metalness: opts.metalness ?? 0.5, roughness: opts.roughness ?? 0.5, ...opts });
+  }
+
+  const M = {
+    silver:    Mat(0xc7c9d1, { metalness: 0.85, roughness: 0.28 }),
+    silverHi:  Mat(0xe2e3e8, { metalness: 0.9,  roughness: 0.18 }),
+    darkMetal: Mat(0x16161c, { metalness: 0.75, roughness: 0.42 }),
+    blackMatte:Mat(0x101014, { metalness: 0.4,  roughness: 0.65 }),
+    chrome:    Mat(0xb7b9c2, { metalness: 1.0,  roughness: 0.08 }),
+    base:      Mat(0x1b1b22, { metalness: 0.7,  roughness: 0.5  }),
+    lens:      Mat(0x001488, { metalness: 0.1,  roughness: 0.02, emissive: new THREE.Color(0x000833) }),
+    led:       Mat(0x4488ff, { emissive: new THREE.Color(0x2244aa), metalness: 0.3, roughness: 0.2 }),
+    cable:     Mat(0x0d0d18, { metalness: 0.3,  roughness: 0.9  }),
+    floor:     Mat(0x111118, { metalness: 0.2,  roughness: 0.95 }),
+    bolt:      Mat(0x33343c, { metalness: 0.9,  roughness: 0.25 }),
+    target:    new THREE.MeshBasicMaterial({ color: 0x44ff88, transparent: true, opacity: 0.6 }),
+    targetRing:new THREE.MeshBasicMaterial({ color: 0x44ff88, wireframe: true, transparent: true, opacity: 0.4 }),
+  };
+
+  // ════════════════════════════════
+  // 6. 도형 유틸 (QUALITY 적용)
+  // ════════════════════════════════
+  const S = QUALITY.cylSegs;
+  const SS = QUALITY.sphSegs;
+
+  function Cyl(rTop, rBot, h, mat, segs = S) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, segs), mat);
+    if (QUALITY.shadowMap) { m.castShadow = true; m.receiveShadow = true; }
+    return m;
+  }
+  function Box(w, h, d, mat) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    if (QUALITY.shadowMap) { m.castShadow = true; m.receiveShadow = true; }
+    return m;
+  }
+  function Sph(r, mat) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, SS, Math.round(SS * 0.75)), mat);
+    if (QUALITY.shadowMap) m.castShadow = true;
+    return m;
+  }
+  function place(parent, child, x, y, z) {
+    child.position.set(x, y, z); parent.add(child); return child;
+  }
+  function Cable(pts, radius, mat) {
+    const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p)));
+    return new THREE.Mesh(new THREE.TubeGeometry(curve, QUALITY.cableSegs, radius, 6, false), mat);
+  }
+
+  // ── 캡슐(스타디움) 단면 링크 압출 ──
+  // 로컬좌표: x = 0~length 링크 축 방향, y = 0~height 두께(위), z = 폭 방향(±width/2)
+  function CapsuleLink(length, width, height, mat, segs = S) {
+    const r = width / 2;
+    const half = Math.max(6, Math.round(segs / 2));
+    const shape = new THREE.Shape();
+    shape.moveTo(0, -r);
+    shape.lineTo(length, -r);
+    shape.absarc(length, 0, r, -Math.PI/2, Math.PI/2, false);
+    shape.lineTo(0, r);
+    shape.absarc(0, 0, r, Math.PI/2, Math.PI*1.5, false);
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth: height, bevelEnabled: true,
+      bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2,
+      curveSegments: half,
+    });
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, mat);
+    if (QUALITY.shadowMap) { m.castShadow = true; m.receiveShadow = true; }
+    return m;
+  }
+
+  // ── 볼트 헤드 (캡 스크류) ──
+  function Bolt(radius, mat) {
+    return Cyl(radius, radius, radius * 0.6, mat, 8);
+  }
+
+  // ── 캡슐 링크 테두리를 따라 볼트 줄 배치 ──
+  // parent 로컬좌표 기준, 링크가 x:0~length, 폭 r=width/2, topY 높이에 배치
+  function placeBoltRow(parent, length, width, topY, mat, boltR, opts = {}) {
+    const r = width / 2;
+    const inset = opts.inset ?? (boltR * 2.3);
+    const ringR = Math.max(0.01, r - inset);
+    const endCount = opts.endCount ?? 5;
+    const sideGap = opts.sideGap ?? 0.55;
+    const pts = [];
+    // 양 끝 반원 호를 따라 볼트
+    for (let i = 0; i < endCount; i++) {
+      const t = i / (endCount - 1);
+      const a = -Math.PI/2 + t * Math.PI; // -90°→+90° (length쪽 끝, +x 방향 호)
+      pts.push([length + Math.cos(a) * ringR, Math.sin(a) * ringR]);
+    }
+    for (let i = 0; i < endCount; i++) {
+      const t = i / (endCount - 1);
+      const a = Math.PI/2 + t * Math.PI; // +90°→+270° (0쪽 끝, -x 방향 호)
+      pts.push([Math.cos(a) * ringR, Math.sin(a) * ringR]);
+    }
+    // 직선 구간 양옆
+    const nStraight = Math.max(1, Math.round(length / sideGap));
+    for (let i = 1; i < nStraight; i++) {
+      const x = length * (i / nStraight);
+      pts.push([x, ringR]);
+      pts.push([x, -ringR]);
+    }
+    pts.forEach(([x, z]) => {
+      const b = Bolt(boltR, mat);
+      b.rotation.x = Math.PI / 2;
+      b.position.set(x, topY, z);
+      parent.add(b);
+    });
+  }
+
+  // ── 패널 분할선 (단면을 가로지르는 얕은 라인) ──
+  function PanelSeam(width, topY, mat, depthScale = 1.04) {
+    const r = (width / 2) * depthScale;
+    const seam = Box(0.016, 0.01, r * 2, mat);
+    seam.position.y = topY;
+    return seam;
+  }
+
+  // ════════════════════════════════
+  // 7. 씬 구성 (바닥 + SCARA 로봇 — 사진 디자인 기반)
+  //
+  //  구조:
+  //  scene
+  //   └─ baseGrp          ← 기어박스+모터 베이스 (고정)
+  //       └─ zCarriage     ← 캐리지 (고정, no_z 버전)
+  //           └─ j1Grp     ← 관절1(어깨) Y회전
+  //               └─ arm1Grp ← 상완
+  //                   └─ j2Grp ← 관절2(팔꿈치) Y회전
+  //                       └─ forearmGrp ← 전완
+  //                           └─ wristGrp ← 손목/출력 플랜지
+  //                               └─ endGrp ← 끝단(출력축)
+  // ════════════════════════════════
+
+  // ── 바닥 ──
+  const floorDisk = Cyl(14, 14, 0.06, M.floor, 48);
+  if (QUALITY.shadowMap) floorDisk.receiveShadow = true;
+  scene.add(floorDisk);
+
+  if (!isLowEnd) {
+    const grid = new THREE.GridHelper(28, 28, 0x1a1a2e, 0x12121e);
+    grid.position.y = 0.03;
+    scene.add(grid);
+  }
+
+  // ── 베이스 어셈블리 (사진 등각도 기준: 사각 기어박스 + 옆구리 모터, 낮게 깔린 구조) ──
+  const baseGrp = new THREE.Group();
+  scene.add(baseGrp);
+
+  const GB_W = 1.05, GB_D = 1.05, GB_H = 0.5; // 기어박스 본체 (사각)
+  const gearBoxBody = Box(GB_W, GB_H, GB_D, M.darkMetal);
+  gearBoxBody.position.set(0, GB_H/2, 0);
+  baseGrp.add(gearBoxBody);
+  // 바닥 접지 볼트
+  [[-GB_W/2+0.08,-GB_D/2+0.08],[GB_W/2-0.08,-GB_D/2+0.08],[-GB_W/2+0.08,GB_D/2-0.08],[GB_W/2-0.08,GB_D/2-0.08]].forEach(([x,z]) => {
+    const bolt = Bolt(0.028, M.bolt);
+    bolt.position.set(x, 0.01, z);
+    baseGrp.add(bolt);
+  });
+  // 기어박스 상판 테두리 볼트
+  if (!isLowEnd) {
+    const ring = [[-0.42,-0.34],[0,-0.34],[0.42,-0.34],[-0.42,0.34],[0,0.34],[0.42,0.34],[-0.42,0],[0.42,0]];
+    ring.forEach(([x,z]) => {
+      const bolt = Bolt(0.024, M.bolt);
+      bolt.position.set(x, GB_H + 0.005, z);
+      baseGrp.add(bolt);
+    });
+  }
+
+  // 스테퍼 모터 (기어박스 옆구리에서 직각으로 돌출)
+  const motorGrp = new THREE.Group();
+  motorGrp.position.set(GB_W/2, GB_H*0.5, 0);
+  motorGrp.rotation.z = -Math.PI / 2;
+  baseGrp.add(motorGrp);
+  const motorCollar = Cyl(0.22, 0.22, 0.07, M.silver, S);
+  motorCollar.position.set(0, 0.04, 0);
+  motorGrp.add(motorCollar);
+  const motorBody = Box(0.46, 0.5, 0.46, M.blackMatte);
+  motorBody.position.set(0, 0.32, 0);
+  motorGrp.add(motorBody);
+  [[-0.17,-0.17],[0.17,-0.17],[-0.17,0.17],[0.17,0.17]].forEach(([x,z]) => {
+    const bolt = Bolt(0.022, M.bolt);
+    bolt.position.set(x, 0.095, z);
+    motorGrp.add(bolt);
+  });
+
+  // ── Z 캐리지 (no_z 버전: 기둥 없이 베이스 위에 고정, 그룹은 IK 호환을 위해 유지) ──
+  const zCarriage = new THREE.Group();
+  zCarriage.position.set(0, GB_H, 0);
+  baseGrp.add(zCarriage);
+
+  const ledMats = [];
+
+  // ── 관절 1 (어깨) — 큰 회전 원판 (사진의 "사각 하우징처럼 보이는" 넓은 디스크) ──
+  const j1Grp = new THREE.Group();
+  j1Grp.position.set(0, 0, 0);
+  zCarriage.add(j1Grp);
+
+  const SHOULDER_R = 0.846; // 어깨 디스크 반경
+  place(j1Grp, Cyl(SHOULDER_R, SHOULDER_R * 1.03, 0.30, M.darkMetal, S), 0, 0.15, 0);
+  place(j1Grp, Cyl(SHOULDER_R * 0.72, SHOULDER_R * 0.72, 0.07, M.silver, S), 0, 0.335, 0);
+  if (!isLowEnd) {
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const bolt = Bolt(0.026, M.bolt);
+      bolt.position.set(Math.cos(a) * SHOULDER_R * 0.86, 0.3, Math.sin(a) * SHOULDER_R * 0.86);
+      j1Grp.add(bolt);
+    }
+    // 안쪽 보스 볼트 원
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const bolt = Bolt(0.018, M.bolt);
+      bolt.position.set(Math.cos(a) * SHOULDER_R * 0.42, 0.37, Math.sin(a) * SHOULDER_R * 0.42);
+      j1Grp.add(bolt);
+    }
+  }
+
+  // ── 상완 (Link 1) — 캡슐형, 가운데 분할선 1개 (사진 기준: 통짜 캡슐, 관절캡 없이 폭만 살짝 좁아짐) ──
+  const arm1Grp = new THREE.Group();
+  arm1Grp.position.set(0, 0.30, 0);
+  j1Grp.add(arm1Grp);
+
+  const L1 = 2.0, L2 = 2.105;  // 상완·전완 길이 (사진 비율: 거의 동일, 전완이 살짝 김)
+  const L_GRIP = 0.35;         // 끝단 출력 플랜지까지의 짧은 길이 (사진엔 별도 그리퍼 없음)
+
+  const ARM1_W = 1.219;              // 캡슐 단면 폭
+  const ARM1_H = 0.30;               // 두께
+  const ELBOW_R = 0.610;             // 팔꿈치 캡 반경 (상완 폭의 절반과 동일 = 매끈한 연결)
+  const ARM1_Y0 = -ARM1_H / 2;       // 캡슐을 부모 원점 기준 상하 대칭 배치
+
+  const arm1Body = CapsuleLink(L1, ARM1_W, ARM1_H, M.silver);
+  arm1Body.position.set(0, ARM1_Y0, 0);
+  arm1Grp.add(arm1Body);
+
+  // 패널 분할선 1개 (사진 측정: 상완 길이의 약 22% 지점)
+  if (!isLowEnd) {
+    const seam = PanelSeam(ARM1_W, ARM1_H/2, M.darkMetal);
+    seam.position.x = L1 * 0.33;
+    arm1Grp.add(seam);
+  }
+  // 볼트 줄 (윗면 테두리)
+  placeBoltRow(arm1Grp, L1, ARM1_W, ARM1_H/2 - 0.01, M.bolt, 0.026, { endCount: 5, sideGap: 0.5 });
+  // 중앙 작은 볼트 2개 (사진 정면도에서 분할선 부근 중앙에 작은 점 2개 보임)
+  if (!isLowEnd) {
+    [-0.1, 0.1].forEach(dz => {
+      const b = Bolt(0.018, M.bolt);
+      b.rotation.x = Math.PI / 2;
+      b.position.set(L1 * 0.45, ARM1_H/2 - 0.008, dz);
+      arm1Grp.add(b);
+    });
+  }
+
+  if (!isLowEnd) {
+    [L1*0.25, L1*0.5, L1*0.78].forEach(x => {
+      const led = Cyl(0.028, 0.028, 0.018, M.led, 6);
+      led.rotation.x = Math.PI / 2;
+      led.position.set(x, ARM1_H/2 - 0.005, ARM1_W*0.5 - 0.13);
+      arm1Grp.add(led);
+      ledMats.push(led);
+    });
+  }
+
+  // ── 관절 2 (팔꿈치) — 원형 캡, 전완이 상완 위에 아주 살짝 얹힌 미세 단차 구조 ──
+  // j2Grp 자체는 상완 캡슐의 중심선(y=0)에 둬서 팔꿈치 캡이 상완과 같은 축을 공유하게 함
+  const ELBOW_CAP_H = 0.30;          // 관절 캡 두께 (상완 두께와 비슷하게)
+  const ELBOW_STEP = 0.04;           // 단차 높이 (사진: 아주 미세한 한 단만 위로)
+  const j2Grp = new THREE.Group();
+  j2Grp.position.set(L1, ELBOW_STEP, 0);
+  arm1Grp.add(j2Grp);
+
+  place(j2Grp, Cyl(ELBOW_R, ELBOW_R * 1.03, ELBOW_CAP_H, M.darkMetal, S), 0, 0, 0);
+  place(j2Grp, Cyl(ELBOW_R * 0.66, ELBOW_R * 0.66, 0.07, M.silver, S), 0, ELBOW_CAP_H/2 + 0.035, 0);
+  if (!isLowEnd) {
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      const bolt = Bolt(0.024, M.bolt);
+      bolt.position.set(Math.cos(a) * ELBOW_R * 0.83, ELBOW_CAP_H/2 - 0.04, Math.sin(a) * ELBOW_R * 0.83);
+      j2Grp.add(bolt);
+    }
+  }
+  // 연결 칼라 — 관절캡 바닥과 상완 윗면 사이를 메워 끊김 없이 마감
+  {
+    const armTop_inJ2 = (ARM1_H/2) - ELBOW_STEP;  // 상완 윗면을 j2Grp 로컬로 환산
+    const capBottom_inJ2 = -ELBOW_CAP_H/2;         // 관절캡 바닥 (j2Grp 로컬)
+    if (armTop_inJ2 > capBottom_inJ2) {
+      const collarH = armTop_inJ2 - capBottom_inJ2;
+      const collar = Cyl(ELBOW_R, ELBOW_R, collarH, M.darkMetal, S);
+      collar.position.set(0, (armTop_inJ2 + capBottom_inJ2) / 2, 0);
+      j2Grp.add(collar);
+    }
+  }
+
+  // ── 전완 (Link 2) — 캡슐형, 상완보다 좁음, 끝에 분할선 1개. 관절 캡 위에 얹힌 단차 구조 ──
+  const ARM2_W = 0.930;
+  const ARM2_H = 0.24;
+  const WRIST_R = 0.465;             // 끝단 플랜지 반경 (전완 폭의 절반과 동일)
+  const ARM2_Y0 = -ARM2_H / 2;       // 캡슐을 부모 원점 기준 상하 대칭 배치
+
+  const forearmGrp = new THREE.Group();
+  forearmGrp.position.set(0, ELBOW_CAP_H/2 + ARM2_H/2, 0); // 전완 캡슐 바닥이 관절 캡 윗면에 정확히 닿도록
+  j2Grp.add(forearmGrp);
+
+  const arm2Body = CapsuleLink(L2, ARM2_W, ARM2_H, M.silver);
+  arm2Body.position.set(0, ARM2_Y0, 0);
+  forearmGrp.add(arm2Body);
+
+  if (!isLowEnd) {
+    const seam = PanelSeam(ARM2_W, ARM2_H/2, M.darkMetal);
+    seam.position.x = L2 * 0.82;
+    forearmGrp.add(seam);
+  }
+  placeBoltRow(forearmGrp, L2, ARM2_W, ARM2_H/2 - 0.008, M.bolt, 0.022, { endCount: 4, sideGap: 0.45 });
+
+  if (!isLowEnd) {
+    [L2*0.15, L2*0.45, L2*0.7].forEach(x => {
+      const led = Cyl(0.02, 0.02, 0.013, M.led, 6);
+      led.rotation.x = Math.PI / 2;
+      led.position.set(x, ARM2_H/2 - 0.004, ARM2_W*0.5 - 0.09);
+      forearmGrp.add(led);
+    });
+  }
+
+  // ── 손목/끝단 (J3) — 사진처럼 별도 그리퍼 없이 작은 원형 출력 플랜지로 마무리 ──
+  const wristGrp = new THREE.Group();
+  wristGrp.position.set(L2, 0, 0);
+  forearmGrp.add(wristGrp);
+
+  const wristHousing = Cyl(WRIST_R, WRIST_R * 1.05, 0.2, M.darkMetal, S);
+  wristGrp.add(wristHousing);
+  const wristCap = Cyl(WRIST_R * 0.62, WRIST_R * 0.62, 0.06, M.silver, S);
+  wristCap.position.set(0, 0.13, 0);
+  wristGrp.add(wristCap);
+  // 출력축 표시 (사진의 살구색 점)
+  const wristPin = Cyl(WRIST_R * 0.16, WRIST_R * 0.16, 0.09, new THREE.MeshStandardMaterial({ color: 0xe0a878, metalness: 0.6, roughness: 0.3 }), S);
+  wristPin.position.set(0, 0.165, 0);
+  wristGrp.add(wristPin);
+  if (!isLowEnd) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const bolt = Bolt(0.02, M.bolt);
+      bolt.position.set(Math.cos(a) * WRIST_R * 0.8, 0.105, Math.sin(a) * WRIST_R * 0.8);
+      wristGrp.add(bolt);
+    }
+    const wristRing = new THREE.Mesh(
+      new THREE.TorusGeometry(WRIST_R * 0.92, 0.01, 6, 24),
+      new THREE.MeshStandardMaterial({ color: 0x00ccff, emissive: new THREE.Color(0x004466), metalness: 0.3 })
+    );
+    wristRing.rotation.x = Math.PI / 2;
+    wristRing.position.y = 0.1;
+    wristGrp.add(wristRing);
+    ledMats.push(wristRing);
+  }
+
+  // ── 엔드 이펙터: 사진에 없으므로 짧은 출력축만 (L_GRIP 만큼, IK 호환용) ──
+  const endGrp = new THREE.Group();
+  endGrp.position.set(0, 0, 0);
+  wristGrp.add(endGrp);
+
+  const tipShaft = Cyl(WRIST_R * 0.5, WRIST_R * 0.42, L_GRIP, M.silver, S);
+  tipShaft.rotation.z = Math.PI / 2;
+  tipShaft.position.set(L_GRIP/2, 0, 0);
+  endGrp.add(tipShaft);
+  const sensorLed = Cyl(0.02, 0.02, 0.015, M.led.clone(), 6);
+  sensorLed.rotation.z = Math.PI / 2;
+  sensorLed.position.set(L_GRIP - 0.04, 0.05, 0);
+  endGrp.add(sensorLed);
+
+  // 핑거 더미 (그리퍼 동작 로직 호환용 — 사진에 없으므로 시각적으로 최소화)
+  const fingerL = [], fingerR = [];
+
+  // ── 케이블 하네스 ──
+  if (!isLowEnd) {
+    const cable1 = Cable([
+      [0.08, ARM1_H/2 + 0.02, 0.04],
+      [L1*0.4, ARM1_H/2 + 0.01, 0.06],
+      [L1*0.75, ARM1_H/2 + 0.0, 0.04],
+      [L1*0.96, ARM1_H/2 - 0.01, 0.025],
+    ], 0.02, M.cable);
+    arm1Grp.add(cable1);
+
+    const cable2 = Cable([
+      [0.05, ARM2_H/2 + 0.015, 0.035],
+      [L2*0.38, ARM2_H/2 + 0.005, 0.045],
+      [L2*0.75, ARM2_H/2 - 0.0,  0.03],
+      [L2*0.95, ARM2_H/2 - 0.008, 0.018],
+    ], 0.015, M.cable);
+    forearmGrp.add(cable2);
+  }
+
+  // spindleGrp 은 하위 호환을 위해 zCarriage 를 참조
+  const spindleGrp = zCarriage;
+
+  // ════════════════════════════════
+  // 8. 타겟 마커
+  // ════════════════════════════════
+  // L1=2.8, L2=2.0 은 로봇 구조 섹션에서 이미 선언됨
+  const targetGrp = new THREE.Group();
+  scene.add(targetGrp);
+  targetGrp.visible = false;
+
+  const targetDot  = Sph(0.12, M.target);
+  const targetRing = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.02, 6, 28), M.targetRing);
+  targetRing.rotation.x = Math.PI / 2;
+  targetGrp.add(targetDot);
+  targetGrp.add(targetRing);
+
+  function makeRangeRing(r, color, opacity) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, wireframe: false });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.04, 5, 64), mat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = zCarriage.position.y + 0.30;
+    scene.add(ring);
+    return ring;
+  }
+  const outerRing = makeRangeRing(L1 + L2 + L_GRIP, 0x4488ff, 0.15);
+  const innerRing = makeRangeRing(Math.max(0, Math.abs(L1 - L2) - L_GRIP), 0xff6644, 0.12);
+  outerRing.visible = false;
+  innerRing.visible = false;
+
+  // ════════════════════════════════
+  // 9. IK 역운동학
+  // ════════════════════════════════
+  let ikElbowFlip = false;  // M 로 토글 — false: elbow-up, true: elbow-down
+
+  const IK = {
+    L1, L2, L_GRIP,
+    J1_MIN: THREE.MathUtils.degToRad(-360), J1_MAX: THREE.MathUtils.degToRad(360),
+    J2_MIN: THREE.MathUtils.degToRad(-360), J2_MAX: THREE.MathUtils.degToRad(360),
+    // 기본 IK: 전완 끝(L1+L2) 기준
+    solve(tx, tz) {
+      const { L1, L2, J1_MIN, J1_MAX, J2_MIN, J2_MAX } = this;
+      const dist = Math.sqrt(tx*tx + tz*tz);
+      const maxR = L1 + L2 - 0.001, minR = Math.abs(L1 - L2) + 0.001;
+      let cx = tx, cz = tz, limited = false;
+      if (dist > maxR) { const s = maxR/dist; cx=tx*s; cz=tz*s; limited=true; }
+      else if (dist < minR && dist > 0.01) { const s = minR/dist; cx=tx*s; cz=tz*s; limited=true; }
+      const d = Math.sqrt(cx*cx + cz*cz);
+      const cosT2 = Math.max(-1, Math.min(1, (d*d - L1*L1 - L2*L2)/(2*L1*L2)));
+      const theta2 = ikElbowFlip ? Math.acos(cosT2) : -Math.acos(cosT2);
+      const k1 = L1 + L2*Math.cos(theta2), k2 = L2*Math.sin(theta2);
+      const theta1 = Math.atan2(cz, cx) - Math.atan2(k2, k1);
+      let t1 = theta1, t2 = theta2, wasLimited = limited;
+      if (t1 < J1_MIN) { t1=J1_MIN; wasLimited=true; }
+      if (t1 > J1_MAX) { t1=J1_MAX; wasLimited=true; }
+      if (t2 < J2_MIN) { t2=J2_MIN; wasLimited=true; }
+      if (t2 > J2_MAX) { t2=J2_MAX; wasLimited=true; }
+      return { theta1:t1, theta2:t2, clampedX:cx, clampedZ:cz,
+               status: wasLimited ? (dist>maxR||dist<minR?'unreachable':'limited') : 'ok' };
+    },
+    // ★ 그리퍼 팁 기준 IK: 마우스 위치가 집게 끝에 오도록 역산
+    // 그리퍼는 전완 방향(theta1+theta2)으로 L_GRIP 만큼 뻗어 있으므로
+    // 손목(전완 끝) 목표 = 마우스 - 그리퍼 벡터
+    solveGripper(tipX, tipZ, j3 = -wristGrp.rotation.y) {
+      return ScaraCore.solveTip(tipX,tipZ,j3,ikElbowFlip,L1,L2,L_GRIP);
+    }
+  };
+
+  // ════════════════════════════════
+  // 10. 슬라이더 UI
+  // ════════════════════════════════
+  const DEF = { j1: 0, j2: 180, j3: 0 };
+  const slJ1 = document.getElementById('j1'), slJ2 = document.getElementById('j2'), slJ3 = document.getElementById('j3');
+  const lJ1  = document.getElementById('j1v'), lJ2  = document.getElementById('j2v'), lJ3 = document.getElementById('j3v');
+  const ikStatus = document.getElementById('ikStatus');
+
+  const Z_BASE   = zCarriage.position.y; // zCarriage 고정 Y 위치
+
+  const sendSimulatorState = () => {
+    const j1Val = parseFloat(slJ1.value);
+    const j2Val = parseFloat(slJ2.value);
+    const j3Val = parseFloat(slJ3.value);
+
+    // 우하단 슬라이더 및 라벨 업데이트 (동기화 - 모드 상관없이 상시 적용)
+    const hwSlJ1 = document.getElementById('hwSliderJ1');
+    const hwSlJ2 = document.getElementById('hwSliderJ2');
+    const hwLblJ1 = document.getElementById('hwLabelJ1');
+    const hwLblJ2 = document.getElementById('hwLabelJ2');
+    if (hwSlJ1) hwSlJ1.value = Math.round(j1Val);
+    if (hwSlJ2) hwSlJ2.value = Math.round(j2Val);
+    if (hwLblJ1) hwLblJ1.textContent = Math.round(j1Val) + '°';
+    if (hwLblJ2) hwLblJ2.textContent = Math.round(j2Val) + '°';
+
+    publishPose();
+  };
+
+  slJ1.oninput = () => {
+    const next=+slJ1.value;
+    if(wpPlaying||wpAwaiting)stopAll('수동 조작');
+    j1Grp.rotation.y = THREE.MathUtils.degToRad(next);
+    lJ1.textContent = slJ1.value+'°';
+    sendSimulatorState();
+  };
+  slJ2.oninput = () => {
+    const next=+slJ2.value;
+    if(wpPlaying||wpAwaiting)stopAll('수동 조작');
+    forearmGrp.rotation.y = THREE.MathUtils.degToRad(next);
+    lJ2.textContent = slJ2.value+'°';
+    sendSimulatorState();
+  };
+  slJ3.oninput = () => {
+    const next=+slJ3.value;
+    if(wpPlaying||wpAwaiting)stopAll('수동 조작');
+    wristGrp.rotation.y = THREE.MathUtils.degToRad(next);
+    lJ3.textContent = slJ3.value+'°';
+    sendSimulatorState();
+  };
+
+  j1Grp.rotation.y      = THREE.MathUtils.degToRad(DEF.j1);
+  forearmGrp.rotation.y = THREE.MathUtils.degToRad(DEF.j2);
+  wristGrp.rotation.y   = THREE.MathUtils.degToRad(DEF.j3);
+
+  // ════════════════════════════════
+  // 11. 추적 모드 & 버튼
+  // ════════════════════════════════
+  let mouseTrack = false, animating = false;
+  let positionLocked = false;
+  let lockedWorldX = 0, lockedWorldZ = 0; // 월드 XZ 좌표를 직접 저장 (카메라 무관)
+
+  const raycaster   = new THREE.Raycaster();
+  const mousePlane  = new THREE.Plane(new THREE.Vector3(0,1,0), -1.1);
+  const mouseVec    = new THREE.Vector2();
+  const targetPoint = new THREE.Vector3();
+  let rawX = 0, rawY = 0;
+
+  const crosshair   = document.getElementById('crosshair');
+  const lockPin     = document.getElementById('lockPin');
+  const lockBadge   = document.getElementById('lockBadge');
+  const touchMarker = document.getElementById('touchMarker');
+  const modeBtn     = document.getElementById('modeBtn');
+  const animBtn     = document.getElementById('animBtn');
+
+  // 고정 해제 헬퍼
+  function clearLock() {
+    positionLocked = false;
+    ghostActive = false; // 잔상 fade-out 시작
+    crosshair.classList.remove('locked');
+    lockPin.style.display = 'none';
+    lockBadge.style.display = 'none';
+    if (mouseTrack) ikStatus.textContent = isMobile ? '손가락으로 이동하세요' : '마우스를 이동하세요';
+  }
+
+  function setTrackUI(on) {
+    mouseTrack = on;
+    if (!on) clearLock();
+    // 추적 OFF 시 보간 상태 초기화 (다음 ON 때 즉시 위치로 점프)
+    if (!on) ikTargetValid = false;
+    modeBtn.classList.toggle('active', on);
+    modeBtn.textContent = on ? (isMobile ? '☝️ 터치 추적 ON' : '🖱 마우스 추적 ON')
+                             : (isMobile ? '☝️ 터치 추적 ON' : '🖱 마우스 추적 ON');
+    targetGrp.visible = on; outerRing.visible = on; innerRing.visible = on;
+    ikStatus.style.display = on ? 'block' : 'none';
+    if (!isMobile) crosshair.style.display = on ? 'block' : 'none';
+    if (!on) touchMarker.style.display = 'none';
+    if (on) { ikStatus.textContent = isMobile ? '손가락으로 이동하세요' : '마우스를 이동하세요'; ikStatus.className=''; }
+  }
+
+  modeBtn.onclick = () => {
+    animating = false;
+    animBtn.textContent = '▶ 애니메이션'; animBtn.classList.remove('active');
+    setTrackUI(!mouseTrack);
+  };
+
+  // ── 키보드 단축키 (document 레벨 — canvas 포커스 무관하게 항상 동작) ──
+  listen(document, 'keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    // T : 터치/마우스 추적 ON/OFF
+    if (e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      animating = false;
+      animBtn.textContent = '▶ 애니메이션'; animBtn.classList.remove('active');
+      setTrackUI(!mouseTrack);
+    }
+
+    // M : IK 팔꿈치 방향 반전
+    if (e.key.toLowerCase() === 'm') {
+      e.preventDefault();
+      ikElbowFlip = !ikElbowFlip;
+      showToast(ikElbowFlip ? 'M: 관절2 반전 모드' : 'M: 관절2 기본 모드');
+      if (mouseTrack && ikStatus.style.display !== 'none') {
+        const prev = ikStatus.textContent, prevCls = ikStatus.className;
+        ikStatus.textContent = ikElbowFlip ? '↙ 관절2 반전' : '↗ 관절2 기본';
+        ikStatus.className = 'limited';
+        later(() => { ikStatus.textContent = prev; ikStatus.className = prevCls; }, 1200);
+      }
+    }
+
+    // O : 그리퍼 코앞에 웨이퍼 캐리어 박스 생성
+    if (e.key.toLowerCase() === 'o') {
+      e.preventDefault();
+      spawnCarrierAtGripper();
+    }
+  });
+
+  // ════════════════════════════════
+  // 11-B. 웨이퍼 캐리어 박스 시스템
+  // ════════════════════════════════
+  const CARRIER_SLOTS = 13;
+  const CARRIER_W = 1.8, CARRIER_H = 3.2, CARRIER_D = 1.8; // AABB 반경용
+  const CARRIER_RADIUS_XZ = 1.6; // 충돌 판정 수평 반경 (XZ원으로 단순화)
+
+  // 여러 캐리어 박스를 배열로 관리
+  const carriers = []; // { group, wx, wz, rotY, slotsFilled, wafers[] }
+
+  let carrierDragState = null; // { carrierId, lastX, lastY }
+  let carrierClickRaycaster = new THREE.Raycaster();
+  let isCarrierDragging = false;
+  let carrierPointerDownX = 0, carrierPointerDownY = 0;
+
+  const carrierMats = {
+    shell:     Mat(0xc8ccd4, { metalness: 0.85, roughness: 0.2 }),
+    shellDark: Mat(0x3a3d48, { metalness: 0.8,  roughness: 0.35 }),
+    rail:      Mat(0x888a9a, { metalness: 0.9,  roughness: 0.15 }),
+    wafer:     new THREE.MeshStandardMaterial({ color: 0x1a1a3a, metalness: 0.6, roughness: 0.1, emissive: new THREE.Color(0x000412) }),
+    waferEdge: new THREE.MeshStandardMaterial({ color: 0x3a3a6a, metalness: 0.7, roughness: 0.2 }),
+    handle:    Mat(0xaaaabc, { metalness: 0.9,  roughness: 0.15 }),
+    hinge:     Mat(0x999aab, { metalness: 0.95, roughness: 0.1 }),
+    door:      new THREE.MeshStandardMaterial({ color: 0xd0d4dc, metalness: 0.7, roughness: 0.3, transparent: true, opacity: 0.42 }),
+    stripMat:  Mat(0xb0b2be, { metalness: 0.9,  roughness: 0.12 }),
+    highlight: new THREE.MeshStandardMaterial({ color: 0x44ccff, metalness: 0.8, roughness: 0.2, emissive: new THREE.Color(0x004466), transparent: true, opacity: 0.85 }),
+    deleteBtn: new THREE.MeshBasicMaterial({ color: 0xff3344 }),
+  };
+
+  function disposeThreeObject(root, disposeAllMaterials = false) {
+    const geometries = new Set();
+    const materials = new Set();
+    root.traverse(obj => {
+      if (obj.geometry) geometries.add(obj.geometry);
+      const objMaterials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      objMaterials.forEach(material => {
+        if (material && (disposeAllMaterials || material.userData.disposeWithObject)) {
+          materials.add(material);
+        }
+      });
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
+  }
+
+  // 그리퍼 팁 월드 좌표 계산 (XZ)
+  function getGripperTipWorld() {
+    const tip=ScaraCore.tip(readPose(),L1,L2,L_GRIP);
+    const baseWorld=new THREE.Vector3();baseGrp.getWorldPosition(baseWorld);
+    return {x:baseWorld.x+tip.x,z:baseWorld.z+tip.z};
+  }
+
+  // 로봇 베이스 월드 XZ
+  function getRobotBaseWorld() {
+    const p = new THREE.Vector3();
+    baseGrp.getWorldPosition(p);
+    return { x: p.x, z: p.z };
+  }
+
+  function buildCarrierBox(spawnWx, spawnWz) {
+    const group = new THREE.Group();
+    group.position.set(spawnWx, 0.05, spawnWz);
+    scene.add(group);
+
+    const W = CARRIER_W, H = CARRIER_H, D = CARRIER_D;
+
+    // ── 외장 셸 ──
+    [-W/2, W/2].forEach(x => {
+      const p = Box(0.08, H, D, carrierMats.shell); p.position.set(x, H/2, 0); group.add(p);
+    });
+    [-0.04, H + 0.04].forEach(y => {
+      const p = Box(W+0.08, 0.08, D, carrierMats.shell); p.position.set(0, y, 0); group.add(p);
+    });
+    const backPanel = Box(W-0.06, H-0.06, 0.07, carrierMats.shellDark);
+    backPanel.position.set(0, H/2, -D/2+0.035); group.add(backPanel);
+    const frontDoor = Box(W-0.12, H-0.12, 0.06, carrierMats.door);
+    frontDoor.position.set(0, H/2, D/2-0.03); group.add(frontDoor);
+
+    // ── 손잡이 ──
+    const handleBase = Box(W*0.55, 0.12, 0.22, carrierMats.handle);
+    handleBase.position.set(0, H+0.08, 0); group.add(handleBase);
+    const handleArch = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 8, 20, Math.PI), carrierMats.handle);
+    handleArch.rotation.z = Math.PI; handleArch.position.set(0, H+0.32, 0); group.add(handleArch);
+    [-0.28, 0.28].forEach(x => {
+      const post = Cyl(0.055, 0.055, 0.25, carrierMats.handle, 8);
+      post.position.set(x, H+0.2, 0); group.add(post);
+    });
+
+    // ── 힌지/래치 ──
+    [H*0.2, H*0.5, H*0.8].forEach(y => {
+      const hinge = Cyl(0.055, 0.055, 0.14, carrierMats.hinge, 8);
+      hinge.rotation.z = Math.PI/2; hinge.position.set(W/2+0.04, y, D/2-0.12); group.add(hinge);
+    });
+    [H*0.35, H*0.65].forEach(y => {
+      const latch = Box(0.12, 0.18, 0.08, carrierMats.shellDark);
+      latch.position.set(-W/2-0.04, y, D/2-0.2); group.add(latch);
+    });
+
+    // ── 슬롯 레일 & 웨이퍼 ──
+    const slotStep = (H-0.5)/(CARRIER_SLOTS+1);
+    const WAFER_R = 0.68, WAFER_T = 0.028;
+    const wafers = [];
+
+    [-W/2+0.1, W/2-0.1].forEach(railX => {
+      for (let s = 0; s < CARRIER_SLOTS; s++) {
+        const slotY = 0.22 + (s+1)*slotStep;
+        const groove = Box(0.05, 0.04, D-0.18, carrierMats.rail);
+        groove.position.set(railX, slotY, 0); group.add(groove);
+      }
+    });
+
+    for (let s = 0; s < CARRIER_SLOTS; s++) {
+      const slotY = 0.22 + (s+1)*slotStep;
+      const waferMaterial = carrierMats.wafer.clone();
+      waferMaterial.userData.disposeWithObject = true;
+      const waferMesh = new THREE.Mesh(new THREE.CylinderGeometry(WAFER_R, WAFER_R, WAFER_T, 48), waferMaterial);
+      waferMesh.rotation.x = 0; waferMesh.position.set(0, slotY, 0); waferMesh.visible = false; group.add(waferMesh);
+      wafers.push({ wafer: waferMesh, slotIdx: s, occupied: false });
+    }
+
+    // ── 하단 지지발 ──
+    [[-W/2+0.18,-D/2+0.18],[W/2-0.18,-D/2+0.18],[-W/2+0.18,D/2-0.18],[W/2-0.18,D/2-0.18]].forEach(([fx,fz]) => {
+      const foot = Cyl(0.07, 0.09, 0.12, carrierMats.shellDark, 6);
+      foot.position.set(fx, -0.06, fz); group.add(foot);
+    });
+
+    // ── 상태 LED ──
+    const statusLedMaterial = new THREE.MeshBasicMaterial({color:0x00aaff});
+    statusLedMaterial.userData.disposeWithObject = true;
+    const statusLed = Cyl(0.04, 0.04, 0.025, statusLedMaterial, 8);
+    statusLed.rotation.x = Math.PI/2; statusLed.position.set(0, 0.18, D/2+0.013); group.add(statusLed);
+
+    // ── 라벨 ──
+    const labelBg = Box(W*0.55, 0.18, 0.04, carrierMats.shellDark);
+    labelBg.position.set(0, H-0.22, D/2+0.02); group.add(labelBg);
+
+    // ── 모서리 스트립 ──
+    [[-W/2,-D/2],[W/2,-D/2],[-W/2,D/2],[W/2,D/2]].forEach(([cx,cz]) => {
+      const strip = Box(0.055, H+0.08, 0.055, carrierMats.stripMat);
+      strip.position.set(cx, H/2, cz); group.add(strip);
+    });
+
+    // ── 내부 조명 ──
+    if (!isLowEnd) {
+      const cLight = new THREE.PointLight(0x0088ff, 1.2, 4);
+      cLight.position.set(0, H/2, 0); group.add(cLight);
+    }
+
+    const carrierObj = {
+      group,
+      wx: spawnWx, wz: spawnWz,
+      rotY: 0,
+      slotsFilled: 0,
+      wafers,
+      id: Date.now() + Math.random(),
+      label: `CB-${String(carriers.length + 1).padStart(2,'0')}`
+    };
+    carriers.push(carrierObj);
+    window.updateCarrierUI();
+    showToast('📦 캐리어 생성 — 슬롯 클릭 후 적재');
+    return carrierObj;
+  }
+
+  // 그리퍼 코앞에 캐리어 스폰
+  function spawnCarrierAtGripper() {
+    const tip = getGripperTipWorld();
+    const a1  = -j1Grp.rotation.y;
+    const a2  = -forearmGrp.rotation.y;
+    // 그리퍼 방향 단위벡터 (XZ)
+    const dirAngle = a1 + a2;
+    // 캐리어 앞면이 그리퍼 팁에 딱 붙도록:
+    // CARRIER_D/2(캐리어 절반 깊이) + 0.12(살짝 여유) 만큼만 앞으로 이동
+    const OFFSET = CARRIER_D / 2 + 0.12;
+    const spawnX = tip.x + Math.cos(dirAngle) * OFFSET;
+    const spawnZ = tip.z + Math.sin(dirAngle) * OFFSET;
+    const carrier = buildCarrierBox(spawnX, spawnZ);
+    // 캐리어 전면이 그리퍼를 바라보도록 Y축 회전
+    carrier.rotY = carrier.group.rotation.y = -(dirAngle - Math.PI / 2);
+  }
+
+  function removeCarrier(carrierId) {
+    const idx = carriers.findIndex(c => c.id === carrierId);
+    if (idx < 0) return;
+    const carrier = carriers[idx];
+    scene.remove(carrier.group);
+    disposeThreeObject(carrier.group);
+    carriers.splice(idx, 1);
+    if (window.selectedCarrierId === carrierId) window.selectedCarrierId = null;
+    window.updateCarrierUI();
+    showToast('🗑 캐리어 삭제됨');
+  }
+
+  function loadWaferIntoCarrier() {
+    const cid = window.selectedCarrierId;
+    if (!cid) { showToast('⚠ 캐리어를 먼저 클릭해서 선택하세요'); return; }
+    const carrierObj = carriers.find(c => c.id === cid);
+    if (!carrierObj) return;
+    const w = carrierObj.wafers.find(w => !w.occupied);
+    if (!w) { showToast(`⚠ ${carrierObj.label} 만석!`); return; }
+w.occupied = true;
+    w.wafer.visible = true;
+    const hue = Math.random() * 0.12 + 0.6;
+    w.wafer.material.color.setHSL(hue, 0.4, 0.18);
+    w.wafer.material.emissive.setHSL(hue, 0.5, 0.04);
+    carrierObj.slotsFilled++;
+    window.updateCarrierUI();
+    showToast(`💿 ${carrierObj.label} 슬롯 ${w.slotIdx+1} 적재`);
+  }
+
+  // ── 마우스 추적 지연 보간 상태 변수 (Exponential Smoothing) ──
+  // 목표 각도 (IK 계산 결과 — 즉각 반영 안 됨)
+  let ikTargetJ1 = 0, ikTargetJ2 = 0, ikTargetJ3 = 0;
+  let ikTargetWx = 0, ikTargetWz = 0;
+  let ikTargetValid = false; // 마우스 추적 시작 전까지 보간 미적용
+
+  function getTrackSmooth() {
+    // trackSmoothEl은 추적 속도 슬라이더 (1~10, 기본 3)
+    const el = document.getElementById('trackSmoothSlider');
+    return el ? parseFloat(el.value) : 3;
+  }
+
+  window.carrierPanelMinimized = false;
+  window.selectedCarrierId = null;
+
+  window.updateCarrierUI = function updateCarrierUI() {
+    const panel = document.getElementById('carrierPanel');
+    const tab   = document.getElementById('carrierTab');
+
+    if (carriers.length === 0) {
+      panel.style.display = 'none';
+      tab.style.display   = 'none';
+      window.carrierPanelMinimized = false;
+      window.selectedCarrierId = null;
+      return;
+    }
+
+    const total    = carriers.reduce((a, c) => a + c.slotsFilled, 0);
+    const maxSlots = carriers.length * CARRIER_SLOTS;
+    document.getElementById('carrierCount').textContent = `${total} / ${maxSlots}`;
+
+    if (window.carrierPanelMinimized) {
+      panel.style.display = 'none';
+      tab.style.display   = 'flex';
+      return;
+    }
+    panel.style.display = 'block';
+    tab.style.display   = 'none';
+
+    const listEl = document.getElementById('carrierList');
+    listEl.innerHTML = '';
+
+    carriers.forEach((c) => {
+      const isSel = window.selectedCarrierId === c.id;
+      const item  = document.createElement('div');
+      item.className = 'carrier-item' + (isSel ? ' selected' : '');
+      item.style.cssText = `cursor:pointer;${isSel
+        ? 'border-color:rgba(60,200,255,0.7);background:rgba(60,200,255,0.12);box-shadow:0 0 6px rgba(60,200,255,0.2);'
+        : ''}`;
+
+      const dot = document.createElement('div');
+      dot.className = 'carrier-dot';
+      if (isSel) dot.style.cssText = 'background:#44ccff;box-shadow:0 0 7px #44ccff;';
+
+      const lbl = document.createElement('div');
+      lbl.className = 'carrier-label';
+      const full = c.slotsFilled >= CARRIER_SLOTS;
+      lbl.innerHTML = `${c.label}<small>${c.slotsFilled}/${CARRIER_SLOTS} 슬롯${full ? ' ✓ 만석' : ''}</small>`;
+
+      const del = document.createElement('span');
+      del.className = 'carrier-del';
+      del.textContent = '×';
+      listen(del, 'click', e => { e.stopPropagation(); removeCarrier(c.id); });
+
+      item.append(dot, lbl, del);
+      listen(item, 'click', () => {
+        window.selectedCarrierId = isSel ? null : c.id;
+        window.updateCarrierUI();
+      });
+      listEl.appendChild(item);
+    });
+
+    // 적재 버튼
+    const loadBtn = document.getElementById('carrierLoadBtn');
+    const selC = carriers.find(c => c.id === window.selectedCarrierId);
+    const canLoad = selC && selC.slotsFilled < CARRIER_SLOTS;
+    loadBtn.disabled = !canLoad;
+    loadBtn.textContent = selC
+      ? (canLoad ? `📥 ${selC.label} 적재` : `⛔ ${selC.label} 만석`)
+      : '📥 캐리어 선택 후 적재';
+  }
+
+  // ══ 캐리어 클릭/드래그 처리 (포인터이벤트에 인터셉트) ══
+  let carrierDragActive = null; // 현재 드래그 중인 캐리어
+  let carrierDragLastX = 0;
+
+  function getCarrierUnderPointer(clientX, clientY) {
+    const mv = new THREE.Vector2(
+      (clientX / window.innerWidth) * 2 - 1,
+      -(clientY / window.innerHeight) * 2 + 1
+    );
+    carrierClickRaycaster.setFromCamera(mv, camera);
+    for (const c of carriers) {
+      const hits = carrierClickRaycaster.intersectObject(c.group, true);
+      if (hits.length > 0) return { carrier: c, hit: hits[0] };
+    }
+    return null;
+  }
+
+  listen(document.getElementById('carrierLoadBtn'), 'click', () => {
+    loadWaferIntoCarrier();
+  });
+  listen(document.getElementById('carrierClearBtn'), 'click', () => {
+    while (carriers.length) {
+      const carrier = carriers.pop();
+      scene.remove(carrier.group);
+      disposeThreeObject(carrier.group);
+    }
+    window.selectedCarrierId = null;
+    window.updateCarrierUI();
+    showToast('📦 모든 캐리어 삭제됨');
+  });
+
+
+  // ── 마우스 이동 (데스크탑) ──
+  // 핵심: positionLocked 상태에서는 rawX/rawY를 절대 갱신하지 않음
+  if (!isMobile) {
+    listen(window, 'mousemove', e => {
+      if (!positionLocked) {
+        rawX = e.clientX; rawY = e.clientY;
+      }
+      if (mouseTrack && !positionLocked) {
+        crosshair.style.left = e.clientX+'px';
+        crosshair.style.top  = e.clientY+'px';
+      }
+    });
+    // ── 좌클릭: 위치 고정 / 해제 토글 ──
+    listen(canvas, 'click', e => {
+      if (!mouseTrack) return;
+
+      // 드래그 직후 click 이벤트 무시 (5px 이상 움직였으면 드래그로 판정)
+      if (clickWasDrag) { clickWasDrag = false; return; }
+
+      if (!positionLocked) {
+        // 클릭 시점의 월드 XZ 좌표를 레이캐스팅으로 계산해서 저장
+        syncMousePlane(); // ★ 클릭 시점 Z와 평면을 맞춤
+        mouseVec.set((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
+        raycaster.setFromCamera(mouseVec, camera);
+        const hit = raycaster.ray.intersectPlane(mousePlane, targetPoint);
+        if (!hit) return; // 평면과 교차 없으면 고정 안 함
+
+        positionLocked = true;
+        lockedWorldX = targetPoint.x;
+        lockedWorldZ = targetPoint.z;
+        ghostActive = true; // 잔상 시작
+
+        crosshair.classList.add('locked');
+
+        // 고정 핀: 현재 크로스헤어 위치에 표시
+        lockPin.style.left   = e.clientX + 'px';
+        lockPin.style.top    = e.clientY + 'px';
+        lockPin.style.display = 'block';
+        // lockBadge 표시 제거됨 (조작법 버튼과 겹쳐서 비활성화)
+
+        ikStatus.textContent = '🔒 위치 고정됨 — 클릭으로 해제';
+        ikStatus.className = 'limited';
+      } else {
+        // 해제
+        clearLock();
+        // 크로스헤어를 현재 마우스 위치로 즉시 이동
+        crosshair.style.left = e.clientX + 'px';
+        crosshair.style.top  = e.clientY + 'px';
+        rawX = e.clientX; rawY = e.clientY;
+      }
+    });
+  }
+
+  // ── IK 공통 적용 함수 ──
+  // 고정 상태면 저장된 좌표, 아니면 rawX/rawY를 사용
+  // 인자로 좌표를 받지 않아 외부에서 오염될 여지를 차단
+
+  function getMousePlaneY() {
+    // 그리퍼 평면의 실제 월드 Y: zCarriage + j1Grp/arm1Grp offset(0.30)
+    return zCarriage.position.y + 0.30;
+  }
+
+  function syncMousePlane() {
+    mousePlane.constant = -getMousePlaneY();
+  }
+
+  // 초기 동기화
+  syncMousePlane();
+
+  // ── 추적 관절 선택 상태 ──
+  const trackFlags = { j1: true, j2: true, j3: true };
+
+  function initTrackToggles() {
+    ['j1','j2','j3'].forEach(ax => {
+      const btn  = document.getElementById('trk' + ax.charAt(0).toUpperCase() + ax.slice(1));
+      const ctrl = document.getElementById('ctrl-' + ax);
+      if (!btn || !ctrl) return;
+      listen(btn, 'click', e => {
+        e.stopPropagation();
+        trackFlags[ax] = !trackFlags[ax];
+        btn.classList.toggle('on', trackFlags[ax]);
+        ctrl.classList.toggle('track-off', !trackFlags[ax]);
+      });
+    });
+  }
+  initTrackToggles();
+
+  // ── 선형 이동 모드 (Shift+V / Shift+H) ──
+  // 'v' = 그리퍼 전진/후진, 'h' = 그리퍼 수직(좌우), null = 일반
+  let linearMode = null;
+  // 스냅샷: 모드 진입 시점의 월드 그리퍼 팁 좌표 + 그리퍼 방향각
+  let linearBaseX = 0, linearBaseZ = 0;
+  let linearGripAngle = 0;
+  // 스냅샷: 진입 시점의 마우스 월드 교점 (레이캐스팅 기준점)
+  let linearOriginX = 0, linearOriginZ = 0;
+
+  function snapLinear(mode) {
+    if (linearMode === mode) return;
+    linearMode = mode;
+    if (!mode) return;
+
+    // 현재 그리퍼 팁 월드 XZ
+    const a1 = -j1Grp.rotation.y;
+    const a2 = -forearmGrp.rotation.y;
+    linearGripAngle = a1 + a2;
+    linearBaseX = IK.L1*Math.cos(a1) + IK.L2*Math.cos(a1+a2) + IK.L_GRIP*Math.cos(a1+a2);
+    linearBaseZ = IK.L1*Math.sin(a1) + IK.L2*Math.sin(a1+a2) + IK.L_GRIP*Math.sin(a1+a2);
+
+    // 진입 시점 마우스 월드 교점 (레이캐스팅)
+    syncMousePlane();
+    mouseVec.set((rawX/window.innerWidth)*2-1, -(rawY/window.innerHeight)*2+1);
+    raycaster.setFromCamera(mouseVec, camera);
+    const hit = raycaster.ray.intersectPlane(mousePlane, targetPoint);
+    linearOriginX = hit ? targetPoint.x : linearBaseX;
+    linearOriginZ = hit ? targetPoint.z : linearBaseZ;
+  }
+
+  let _shiftDown = false;
+  listen(document, 'keydown', ev => {
+    if (ev.key === 'Shift') { _shiftDown = true; return; }
+    if (!_shiftDown || !mouseTrack) return;
+    if (ev.key.toLowerCase() === 'v') { ev.preventDefault(); snapLinear('v'); }
+    if (ev.key.toLowerCase() === 'h') { ev.preventDefault(); snapLinear('h'); }
+  });
+  listen(document, 'keyup', ev => {
+    if (ev.key === 'Shift') {
+      _shiftDown = false;
+      linearMode = null;
+    }
+  });
+
+  function applyIK() {
+    let wx, wz;
+
+    if (positionLocked) {
+      wx = lockedWorldX;
+      wz = lockedWorldZ;
+    } else if (linearMode) {
+      // ── 선형 이동: 레이캐스팅으로 현재 마우스 월드 좌표를 구한 뒤
+      //    진입 기준점에서의 델타 벡터를 그리퍼 축에 투영 ──
+      syncMousePlane();
+      mouseVec.set((rawX/window.innerWidth)*2-1, -(rawY/window.innerHeight)*2+1);
+      raycaster.setFromCamera(mouseVec, camera);
+      const hit = raycaster.ray.intersectPlane(mousePlane, targetPoint);
+      if (!hit) { wx = linearBaseX; wz = linearBaseZ; }
+      else {
+        // 마우스 월드 이동 델타
+        const mdx = targetPoint.x - linearOriginX;
+        const mdz = targetPoint.z - linearOriginZ;
+
+        if (linearMode === 'v') {
+          // 그리퍼 방향 단위벡터 (전진/후진)
+          const ux = Math.cos(linearGripAngle);
+          const uz = Math.sin(linearGripAngle);
+          // 델타를 그리퍼 방향으로 투영(스칼라)
+          const proj = mdx*ux + mdz*uz;
+          wx = linearBaseX + ux*proj;
+          wz = linearBaseZ + uz*proj;
+        } else {
+          // 그리퍼 수직 방향 (좌/우)
+          const ux = -Math.sin(linearGripAngle);  // perp
+          const uz =  Math.cos(linearGripAngle);
+          const proj = mdx*ux + mdz*uz;
+          wx = linearBaseX + ux*proj;
+          wz = linearBaseZ + uz*proj;
+        }
+      }
+    } else {
+      syncMousePlane();
+      mouseVec.set((rawX/window.innerWidth)*2-1, -(rawY/window.innerHeight)*2+1);
+      raycaster.setFromCamera(mouseVec, camera);
+      const hit = raycaster.ray.intersectPlane(mousePlane, targetPoint);
+      if (!hit) return;
+      wx = targetPoint.x;
+      wz = targetPoint.z;
+    }
+
+    // ── IK 풀기 (Exponential Smoothing 방식으로 느리게 적용) ──
+    const ik = IK.solveGripper(wx, wz);
+    const tgtJ1 = -ik.theta1;
+    const tgtJ2 = -ik.theta2;
+
+    // 손목 목표각 계산
+    const tgtJ3 = wristGrp.rotation.y;
+
+    // 첫 프레임 초기화: 즉시 목표로 점프
+    if (!ikTargetValid) {
+      ikTargetJ1 = tgtJ1;
+      ikTargetJ2 = tgtJ2;
+      ikTargetJ3 = tgtJ3;
+      ikTargetWx = ik.clampedX;
+      ikTargetWz = ik.clampedZ;
+      ikTargetValid = true;
+    } else {
+      // 지수 평활 보간: 슬라이더 1(아주 느림) ~ 10(즉시) → alpha 0.015 ~ 0.5
+      const s = getTrackSmooth();
+      const alpha = Math.pow(s / 10, 2.5) * 0.5;
+      ikTargetJ1 += (tgtJ1 - ikTargetJ1) * alpha;
+      ikTargetJ2 += (tgtJ2 - ikTargetJ2) * alpha;
+      ikTargetJ3 += (tgtJ3 - ikTargetJ3) * alpha;
+      ikTargetWx += (ik.clampedX - ikTargetWx) * alpha;
+      ikTargetWz += (ik.clampedZ - ikTargetWz) * alpha;
+    }
+
+    // ── 보간된 각도를 실제 관절에 반영 ──
+    if (trackFlags.j1) {
+      j1Grp.rotation.y = ikTargetJ1;
+      const d1 = THREE.MathUtils.radToDeg(ikTargetJ1);
+      slJ1.value = Math.max(-360, Math.min(360, d1)); lJ1.textContent = slJ1.value+'°';
+    }
+    if (trackFlags.j2) {
+      forearmGrp.rotation.y = ikTargetJ2;
+      const d2 = THREE.MathUtils.radToDeg(ikTargetJ2);
+      slJ2.value = Math.max(-360, Math.min(360, d2)); lJ2.textContent = slJ2.value+'°';
+    }
+    // ── 관절 3 (손목) ──
+    if (trackFlags.j3) {
+      wristGrp.rotation.y = ikTargetJ3;
+      const wDeg = Math.round(THREE.MathUtils.radToDeg(ikTargetJ3));
+      slJ3.value = Math.max(-180, Math.min(180, wDeg)); lJ3.textContent = slJ3.value+'°';
+    }
+
+    targetGrp.position.set(ikTargetWx, getMousePlaneY() - 0.1, ikTargetWz);
+
+    const linLabel = linearMode === 'v' ? '⇅ 세로 선형이동 ' : linearMode === 'h' ? '⇄ 가로 선형이동 ' : '';
+    const sm = { ok:['정상 추적 중',''], limited:['관절 한계 도달','limited'], unreachable:['도달 불가 영역','unreachable'] };
+    if (!positionLocked) {
+      const [msg, cls] = sm[ik.status];
+      ikStatus.textContent = linLabel + msg;
+      ikStatus.className = linearMode ? 'limited' : cls;
+    }
+    setLedColor(ik.status);
+    targetRing.rotation.y += 0.03;
+
+    // 크로스헤어 선형이동 상태 반영
+    if (!isMobile) {
+      crosshair.classList.toggle('shift', !!linearMode && !positionLocked);
+    }
+
+    publishPose();
+  }
+
+  // ════════════════════════════════
+  // 12. 터치 제스처 핸들러
+  //     - 1포인터: 카메라 회전 OR IK 추적
+  //     - 2포인터: 핀치 줌
+  // ════════════════════════════════
+  let isDragging = false, lx = 0, ly = 0;
+  let theta = 0.55, phi = 0.55, radius = 9;
+  let clickWasDrag = false;     // 드래그 후 click 이벤트 억제용
+  let pointerDownX = 0, pointerDownY = 0;
+
+  // 핀치 줌용
+  let pinchDist0 = 0, radiusAtPinch = 18;
+  let activePointers = new Map(); // pointerId → {x, y}
+
+  function getPinchDist() {
+    const pts = [...activePointers.values()];
+    if (pts.length < 2) return 0;
+    const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  // Pointer Events API (마우스 + 터치 통합)
+  listen(canvas, 'pointerdown', e => {
+    // UI 영역 제외
+    const uiRect = uiEl.getBoundingClientRect();
+    if (e.clientX >= uiRect.left && e.clientX <= uiRect.right &&
+        e.clientY >= uiRect.top  && e.clientY <= uiRect.bottom) return;
+
+    // ── 캐리어 클릭 감지 (단일 포인터만) ──
+    if (activePointers.size === 0) {
+      const hit = getCarrierUnderPointer(e.clientX, e.clientY);
+      if (hit) {
+        // 캐리어 드래그 시작
+        carrierDragActive = hit.carrier;
+        carrierDragLastX  = e.clientX;
+        canvas.setPointerCapture(e.pointerId);
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        carrierPointerDownX = e.clientX; carrierPointerDownY = e.clientY;
+        clickWasDrag = false;
+        return; // 카메라 회전으로 넘어가지 않음
+      }
+    }
+
+    canvas.setPointerCapture(e.pointerId);
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    clickWasDrag = false;
+    pointerDownX = e.clientX; pointerDownY = e.clientY;
+
+    if (activePointers.size === 1) {
+      isDragging = true; lx = e.clientX; ly = e.clientY;
+      // 고정 상태에서는 rawX/rawY 절대 갱신 안 함
+      if (!positionLocked) {
+        rawX = e.clientX; rawY = e.clientY;
+      }
+
+      // 터치 추적 모드: 터치 마커 표시
+      if (mouseTrack && isMobile) {
+        touchMarker.style.display = 'block';
+        touchMarker.style.left = e.clientX+'px';
+        touchMarker.style.top  = e.clientY+'px';
+      }
+    } else if (activePointers.size === 2) {
+      // 핀치 시작
+      pinchDist0 = getPinchDist();
+      radiusAtPinch = radius;
+      isDragging = false; // 핀치 중엔 회전 비활성
+    }
+  });
+
+  listen(canvas, 'pointermove', e => {
+    if (!activePointers.has(e.pointerId)) return;
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // 드래그 판정 (click 억제용)
+    const dx = e.clientX - pointerDownX, dy = e.clientY - pointerDownY;
+    if (Math.sqrt(dx*dx + dy*dy) > 5) clickWasDrag = true;
+
+    // ── 캐리어 드래그: Y축 회전 ──
+    if (carrierDragActive) {
+      const dxC = e.clientX - carrierPointerDownX, dyC = e.clientY - carrierPointerDownY;
+      if (Math.sqrt(dxC*dxC + dyC*dyC) > 5) clickWasDrag = true;
+      const deltaX = e.clientX - carrierDragLastX;
+      carrierDragActive.rotY += deltaX * 0.012;
+      carrierDragActive.group.rotation.y = carrierDragActive.rotY;
+      carrierDragLastX = e.clientX;
+      return;
+    }
+
+    // ── 2포인터: 핀치 줌 ──
+    if (activePointers.size === 2) {
+      const d = getPinchDist();
+      if (pinchDist0 > 0) radius = Math.max(2.5, Math.min(20, radiusAtPinch * (pinchDist0 / d)));
+      return;
+    }
+
+    if (!isDragging) return;
+
+    // ── 1포인터 처리 ──
+    if (mouseTrack && !positionLocked && !isMobile) {
+      // [데스크탑 + 추적 ON + 비고정]: rawX/rawY는 mousemove에서 갱신 중 → 카메라 회전 안 함
+      return;
+    }
+
+    if (mouseTrack && !positionLocked && isMobile) {
+      // [모바일 + 추적 ON + 비고정]: 터치 위치 → rawX/rawY 갱신, 카메라 회전 안 함
+      rawX = e.clientX; rawY = e.clientY;
+      touchMarker.style.left = e.clientX+'px';
+      touchMarker.style.top  = e.clientY+'px';
+      return;
+    }
+
+    // 그 외 모든 경우(추적 OFF / 고정 상태): 카메라 궤도 회전
+    // positionLocked 상태에서 rawX/rawY는 절대 건드리지 않음
+    theta -= (e.clientX - lx) * (isMobile ? 0.007 : 0.005);
+    phi    = Math.max(0.1, Math.min(1.45, phi - (e.clientY - ly) * (isMobile ? 0.007 : 0.005)));
+    lx = e.clientX; ly = e.clientY;
+  });
+
+  listen(canvas, 'pointerup', e => {
+    activePointers.delete(e.pointerId);
+    // 캐리어 드래그 종료
+    if (carrierDragActive) {
+      carrierDragActive = null;
+      canvas.releasePointerCapture(e.pointerId);
+      return;
+    }
+    if (activePointers.size === 0) {
+      isDragging = false;
+      if (isMobile) touchMarker.style.display = 'none';
+    } else if (activePointers.size === 1) {
+      // 핀치 → 단일 터치 복귀
+      const remaining = [...activePointers.values()][0];
+      lx = remaining.x; ly = remaining.y;
+      isDragging = true;
+    }
+    canvas.releasePointerCapture(e.pointerId);
+  });
+
+  listen(canvas, 'pointercancel', e => {
+    activePointers.delete(e.pointerId);
+    if (activePointers.size === 0) isDragging = false;
+  });
+
+  // 데스크탑 스크롤 줌
+  listen(canvas, 'wheel', e => {
+    radius = Math.max(2.5, Math.min(20, radius + e.deltaY * 0.02));
+  }, { passive: true });
+
+  // ════════════════════════════════
+  // 13. 애니메이션 버튼 & 리셋
+  // ════════════════════════════════
+  let animT = 0;
+
+  animBtn.onclick = () => {
+    if (mouseTrack) { setTrackUI(false); }
+    animating = !animating;
+    animBtn.textContent = animating ? '⏸ 정지' : '▶ 애니메이션';
+    animBtn.classList.toggle('active', animating);
+  };
+
+  document.getElementById('resetBtn').onclick = () => {
+    animating = false; setTrackUI(false);
+    animBtn.textContent = '▶ 애니메이션'; animBtn.classList.remove('active');
+    slJ1.value=DEF.j1; slJ2.value=DEF.j2; slJ3.value=DEF.j3;
+    lJ1.textContent=DEF.j1+'°'; lJ2.textContent=DEF.j2+'°'; lJ3.textContent=DEF.j3+'°';
+    j1Grp.rotation.y=THREE.MathUtils.degToRad(DEF.j1);
+    forearmGrp.rotation.y=THREE.MathUtils.degToRad(DEF.j2);
+    wristGrp.rotation.y=THREE.MathUtils.degToRad(DEF.j3);
+    syncMousePlane();
+  };
+
+  // ════════════════════════════════
+  // 14. LED 색상
+  // ════════════════════════════════
+  function setLedColor(status) {
+    const color = status==='ok' ? new THREE.Color(0x4488ff)
+                : status==='limited' ? new THREE.Color(0xffaa44)
+                : new THREE.Color(0xff4444);
+    ledMats.forEach(l => {
+      l.material.color.set(color);
+      if (l.material.emissive) l.material.emissive.set(color.clone().multiplyScalar(0.5));
+    });
+  }
+
+  // ════════════════════════════════
+  // 16. 웨이포인트 시스템
+  // ════════════════════════════════
+  const WP_MAX    = 50;
+  const WP_COLORS = [
+    '#ff6b6b','#ffa94d','#ffe066','#69db7c',
+    '#4dabf7','#a78bfa','#f783ac','#63e6be'
+  ];
+  const WP_GHOST_MAX   = 0.32; // 잔상 최대 불투명도
+  const WP_GHOST_SPEED = 0.04; // fade 속도
+  let   wpGhostVisible = true; // 잔상 on/off 상태
+
+  // 웨이포인트 데이터: { wx, wz, j1, j2, color, ghostRT }
+  const waypoints = [];
+
+  // 3D 씬 내 웨이포인트 마커 그룹 (공 + 기둥)
+  const wpMarkerGrp = new THREE.Group();
+  scene.add(wpMarkerGrp);
+
+  // 경로 선 (라인 스트립)
+  const wpLineMat = new THREE.LineBasicMaterial({ color: 0x7755cc, transparent: true, opacity: 0.45 });
+  let   wpLineObj = null;
+
+  // 잔상 쿼드는 ghostScene에 추가 (기존 ghostScene 재활용)
+
+  // 토스트 표시
+  let wpToastTimer = null;
+  const wpToastEl  = document.getElementById('wpToast');
+  function showToast(msg) {
+    wpToastEl.textContent = msg;
+    wpToastEl.classList.add('show');
+    clearTimeout(wpToastTimer);
+    wpToastTimer = later(() => wpToastEl.classList.remove('show'), 1800);
+  }
+
+  // 3D 마커 재빌드
+  function rebuildMarkers() {
+    // 기존 마커 제거
+    while (wpMarkerGrp.children.length) {
+      const marker = wpMarkerGrp.children[0];
+      wpMarkerGrp.remove(marker);
+      disposeThreeObject(marker, true);
+    }
+
+    // 경로 선 제거
+    if (wpLineObj) {
+      scene.remove(wpLineObj);
+      wpLineObj.geometry.dispose();
+      wpLineObj = null;
+    }
+
+    if (waypoints.length === 0) return;
+
+    waypoints.forEach((wp, i) => {
+      const col = new THREE.Color(wp.color);
+
+      // 발광 구 마커
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.13, 10, 8),
+        new THREE.MeshBasicMaterial({ color: col })
+      );
+      sphere.position.set(wp.wx, 1.15, wp.wz);
+      wpMarkerGrp.add(sphere);
+
+      // 수직 기둥
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.4 })
+      );
+      pole.position.set(wp.wx, 0.9, wp.wz);
+      wpMarkerGrp.add(pole);
+
+      // 번호 링
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.2, 0.015, 6, 24),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.5 })
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(wp.wx, 1.15, wp.wz);
+      wpMarkerGrp.add(ring);
+    });
+
+    // 경로 선
+    if (waypoints.length >= 2) {
+      const pts = waypoints.map(wp => new THREE.Vector3(wp.wx, 1.15, wp.wz));
+      wpLineObj = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        wpLineMat
+      );
+      scene.add(wpLineObj);
+    }
+  }
+
+  // UI 목록 재빌드
+  function rebuildList() {
+    const list    = document.getElementById('wpList');
+    const countEl = document.getElementById('wpCount');
+    list.innerHTML = '';
+    countEl.textContent = `${waypoints.length} / ${WP_MAX}`;
+
+    waypoints.forEach((wp, i) => {
+      const item = document.createElement('div');
+      item.className = 'wp-item';
+      item.dataset.idx = i;
+      item.innerHTML = `
+        <div class="wp-dot" style="background:${wp.color};color:${wp.color}"></div>
+        <div class="wp-label">WP-${String(i+1).padStart(2,'0')}
+          <small>X:${wp.wx.toFixed(1)} Z:${wp.wz.toFixed(1)}</small>
+        </div>
+        <span class="wp-del" data-idx="${i}">✕</span>`;
+
+      // 클릭 → 즉시 이동
+      listen(item, 'click', e => {
+        if (e.target.classList.contains('wp-del')) return;
+        moveToWaypoint(i, true);
+      });
+      // 삭제
+      item.querySelector('.wp-del').addEventListener('click', e => {
+        e.stopPropagation();
+        removeWaypoint(+e.target.dataset.idx);
+      });
+      list.appendChild(item);
+    });
+
+    document.getElementById('wpRunBtn').disabled = waypoints.length < 1;
+  }
+
+  // 웨이포인트 추가 (우클릭 시 호출)
+  function addWaypoint(wx, wz, overrideJ1, overrideJ2) {
+    if (waypoints.length >= WP_MAX) { showToast(`최대 ${WP_MAX}개까지 저장 가능합니다`); return; }
+
+    // 관절각: 직접 전달받으면 그대로 사용, 없으면 그리퍼 팁 기준 IK로 계산
+    let tJ1, tJ2;
+    if (overrideJ1 !== undefined && overrideJ2 !== undefined) {
+      tJ1 = overrideJ1;
+      tJ2 = overrideJ2;
+    } else {
+      const ik = IK.solveGripper(wx, wz);
+      tJ1 = -ik.theta1;
+      tJ2 = -ik.theta2;
+    }
+
+    // ── 원본 로봇을 목표 포즈로 잠깐 이동 → 각 노드의 worldMatrix 확정 ──
+    const savedJ1 = j1Grp.rotation.y;
+    const savedJ2 = forearmGrp.rotation.y;
+    const savedJ3 = wristGrp.rotation.y;   // ★ 손목 현재 각도 저장
+    j1Grp.rotation.y      = tJ1;
+    forearmGrp.rotation.y = tJ2;
+    // 손목은 현재 위치 그대로 캡처 (우클릭 시점의 값 포함)
+
+    // worldMatrix를 최신화
+    scene.updateMatrixWorld(true);
+
+    // ── 잔상 씬: 조명 ──
+    const wpScene  = new THREE.Scene();
+    wpScene.add(new THREE.AmbientLight(0x334466, isLowEnd ? 4.5 : 3));
+    const wpSun = new THREE.DirectionalLight(0xffffff, 3);
+    wpSun.position.set(8, 16, 8);
+    wpScene.add(wpSun);
+    if (!isLowEnd) {
+      const wpRim = new THREE.PointLight(0x2244ff, 4, 60);
+      wpRim.position.set(-12, 10, -12);
+      wpScene.add(wpRim);
+    }
+
+    // ── 잔상 머티리얼 ──
+    const wpColor    = new THREE.Color(WP_COLORS[waypoints.length % WP_COLORS.length]);
+    const ghostObjMat = new THREE.MeshStandardMaterial({
+      color:     wpColor,
+      emissive:  wpColor.clone().multiplyScalar(0.3),
+      transparent: true,
+      opacity:   wpGhostVisible ? WP_GHOST_MAX : 0,
+      metalness: 0.5, roughness: 0.3,
+      depthWrite: false,
+    });
+
+    // ── baseGrp 전체를 복제하되,
+    //    각 Mesh의 matrixWorld를 씬 루트 기준 위치로 직접 설정 ──
+    // 이렇게 하면 계층 탐색 없이 포즈가 100% 정확하게 보존됨
+    baseGrp.traverse(original => {
+      if (!original.isMesh) return;
+
+      const ghost = new THREE.Mesh(original.geometry, ghostObjMat);
+      ghost.castShadow    = false;
+      ghost.receiveShadow = false;
+
+      // matrixWorld → 씬 루트 기준 transform 그대로 적용
+      ghost.matrix.copy(original.matrixWorld);
+      ghost.matrix.decompose(ghost.position, ghost.quaternion, ghost.scale);
+      ghost.matrixAutoUpdate = true;
+
+      wpScene.add(ghost);
+    });
+
+    // 원본 로봇 포즈 복원
+    j1Grp.rotation.y      = savedJ1;
+    forearmGrp.rotation.y = savedJ2;
+
+    const wp = {
+      wx, wz,
+      j1: tJ1, j2: tJ2,
+      j3: savedJ3,           // ★ 손목 각도 저장
+      color: '#' + wpColor.getHexString(),
+      ghostScene:  wpScene,
+      ghostMat:    ghostObjMat,
+      ghostOpacity: wpGhostVisible ? WP_GHOST_MAX : 0,
+    };
+    waypoints.push(wp);
+
+    // 블록 에디터 동기화용 전역 노출
+    window.__scaraWaypoints = waypoints.map(w => ({
+      wx: w.wx, wz: w.wz, j1: w.j1, j2: w.j2,
+      j3: w.j3 ?? 0, color: w.color
+    }));
+
+    rebuildMarkers();
+    rebuildList();
+    showToast(`WP-${String(waypoints.length).padStart(2,'0')} 저장됨`);
+  }
+
+  // 웨이포인트 삭제
+  function removeWaypoint(idx) {
+    const [removed] = waypoints.splice(idx, 1);
+    if(removed) { removed.ghostMat.dispose(); removed.ghostScene.clear(); }
+    if(wpPlaying || wpAwaiting) window.ScaraScene.stop();
+    window.__scaraWaypoints = waypoints.map(w => ({
+      wx: w.wx, wz: w.wz, j1: w.j1, j2: w.j2,
+      j3: w.j3 ?? 0, color: w.color
+    }));
+    rebuildMarkers();
+    rebuildList();
+  }
+
+  // 잔상 ON/OFF 토글
+  const wpGhostBtn = document.getElementById('wpGhostBtn');
+  listen(wpGhostBtn, 'click', () => {
+    wpGhostVisible = !wpGhostVisible;
+    wpGhostBtn.textContent = wpGhostVisible ? '👁 잔상 ON' : '👁 잔상 OFF';
+    wpGhostBtn.classList.toggle('off', !wpGhostVisible);
+    showToast(wpGhostVisible ? '잔상 표시 ON' : '잔상 표시 OFF');
+  });
+
+  // 전체 삭제
+  listen(document.getElementById('wpClearBtn'), 'click', () => {
+    while (waypoints.length) removeWaypoint(0);
+    showToast('웨이포인트 전체 삭제');
+  });
+
+  // 속도 슬라이더
+  const wpSpeedEl    = document.getElementById('wpSpeed');
+  const wpSpeedValEl = document.getElementById('wpSpeedVal');
+  wpSpeedEl.oninput  = () => { wpSpeedValEl.textContent = wpSpeedEl.value; };
+
+  // ── 웨이포인트 이동 (부드러운 보간) ──
+  let wpPlaying    = false;
+  let wpPlayIdx    = 0;
+  let wpInterpT    = 0;
+  let wpSrcJ1      = 0, wpSrcJ2 = 0, wpSrcJ3 = 0;  // ★ J3 출발값 추가
+  let wpSingleShot = false;
+
+  function moveToWaypoint(idx, single = false) {
+    if (waypoints.length === 0) return;
+
+    if(wpAwaiting)return;
+    if(!SIMULATE_MODE){controller.start();updateControlUI();}
+    motionGeneration++;
+    wpPlaying    = true;
+    wpSingleShot = single;
+    wpPlayIdx    = idx;
+    wpInterpT    = 0;
+    wpSrcJ1      = j1Grp.rotation.y;
+    wpSrcJ2      = forearmGrp.rotation.y;
+    wpSrcJ3      = wristGrp.rotation.y;
+    animating    = false;
+    setTrackUI(false);
+    document.querySelectorAll('.wp-item').forEach((el, i) =>
+      el.classList.toggle('active', i === idx));
+  }
+
+  // 실행 버튼
+  const wpRunBtn = document.getElementById('wpRunBtn');
+  listen(wpRunBtn, 'click', () => {
+    if (wpPlaying) {
+      // 정지
+      stopAll('웨이포인트 정지');
+      wpRunBtn.textContent = '▶ 실행';
+      wpRunBtn.classList.remove('running');
+      document.querySelectorAll('.wp-item').forEach(el => el.classList.remove('active'));
+    } else {
+      if (waypoints.length < 1) return;
+      wpRunBtn.textContent = '⏸ 정지';
+      wpRunBtn.classList.add('running');
+      moveToWaypoint(0, false);
+    }
+  });
+
+  // 우클릭 이벤트 (캔버스 전용)
+  listen(canvas, 'contextmenu', e => {
+    e.preventDefault();
+
+    if (mouseTrack) {
+      if (positionLocked) {
+        // 고정 모드: 로봇이 실제 향하고 있는 좌표(lockedWorldX/Z)를 저장
+        // 현재 관절각도 직접 전달 → IK 재계산 오차 없음
+        const a1 = j1Grp.rotation.y;
+        const a2 = forearmGrp.rotation.y;
+        addWaypoint(lockedWorldX, lockedWorldZ, a1, a2);
+      } else {
+        // 비고정 추적 모드: 현재 마우스 위치 → 월드 XZ → IK 계산
+        syncMousePlane(); // ★ 저장 직전 평면을 현재 Z에 맞춤
+        mouseVec.set(
+          (e.clientX / window.innerWidth)  * 2 - 1,
+         -(e.clientY / window.innerHeight) * 2 + 1
+        );
+        raycaster.setFromCamera(mouseVec, camera);
+        const hit = raycaster.ray.intersectPlane(mousePlane, targetPoint);
+        if (!hit) return;
+        addWaypoint(targetPoint.x, targetPoint.z);
+      }
+    } else {
+      // 일반 모드: 현재 관절각을 직접 전달 → IK 재계산 오차 없음
+      // FK로 참조용 wx/wz 계산 (마커 위치 표시용)
+      const a1 = j1Grp.rotation.y;
+      const a2 = forearmGrp.rotation.y;
+      const {x:wx,z:wz} = getGripperTipWorld();
+      addWaypoint(wx, wz, j1Grp.rotation.y, forearmGrp.rotation.y);
+    }
+  });
+
+  // ════════════════════════════════
+  // 17. 렌더 루프 (잔상 + 웨이포인트 보간)
+  // ════════════════════════════════
+  let wpAwaiting=false, motionGeneration=0, linearPath=null;
+  function readPose() {
+    return {j1:THREE.MathUtils.radToDeg(j1Grp.rotation.y),j2:THREE.MathUtils.radToDeg(forearmGrp.rotation.y),j3:THREE.MathUtils.radToDeg(wristGrp.rotation.y)};
+  }
+  function publishPose() {
+    const p=readPose();window.__scaraJointState=p;window.__scaraWpPlaying=wpPlaying||wpAwaiting;
+    for(const a of ScaraCore.AXES){
+      const val=p[a],el=document.getElementById(a);el.value=val;
+      document.getElementById(a+'v').textContent=val.toFixed(1)+'°';
+      const hw=document.getElementById(a==='j3'?'sliderJ3':'hwSlider'+a.toUpperCase());
+      if(hw)hw.value=val;
+      const label=document.getElementById(a==='j3'?'labelJ3':'hwLabel'+a.toUpperCase());
+      if(label)label.textContent=val.toFixed(1)+'°';
+    }
+  }
+  function setPose(p) {
+    p=ScaraCore.validatePose(p);
+    j1Grp.rotation.y=p.j1*Math.PI/180;forearmGrp.rotation.y=p.j2*Math.PI/180;wristGrp.rotation.y=p.j3*Math.PI/180;
+    ikTargetValid=false;publishPose();
+  }
+  function stopScene() {
+    motionGeneration++;wpPlaying=false;wpAwaiting=false;linearPath=null;animating=false;setTrackUI(false);
+    window.__scaraCmdTarget=null;
+    ['MoveL','MoveJ','MoveHome','Gripper'].forEach(k=>window['__scara'+k+'Cmd']=null);
+    window.__scaraGripperWaitEnd=null;
+    wpRunBtn.textContent='▶ 실행';wpRunBtn.classList.remove('running');
+    animBtn.textContent='▶ 애니메이션';animBtn.classList.remove('active');publishPose();
+  }
+  window.ScaraScene={readPose,setPose,stop:stopScene,addWaypoint:()=>{const t=getGripperTipWorld();addWaypoint(t.x,t.z,j1Grp.rotation.y,forearmGrp.rotation.y);},removeWaypoint,
+    memory:()=>({waypoints:waypoints.length,carriers:carriers.length,...renderer.info.memory})};
+  function notifyMove(cmd='moveComplete',extra={}) { if(typeof notifyEditor==='function')notifyEditor(cmd,{token:window.__scaraBlockMoveToken,...extra}); }
+  function beginMove(target,speed,path=null) {
+    if(wpAwaiting)throw new Error('이전 이동 응답 대기 중');
+    motionGeneration++;linearPath=path;
+    window.__scaraCmdTarget=target;wpSpeedEl.value=ScaraCore.finite(speed,1,10);
+    wpPlaying=true;wpSingleShot=true;wpInterpT=0;
+    wpSrcJ1=j1Grp.rotation.y;wpSrcJ2=forearmGrp.rotation.y;wpSrcJ3=wristGrp.rotation.y;
+    animating=false;setTrackUI(false);
+  }
+  function linearPose(path,t) {
+    const j3=path.j3From+(path.j3To-path.j3From)*t;
+    const ik=ScaraCore.solveTip(path.from.x+(path.to.x-path.from.x)*t,path.from.z+(path.to.z-path.from.z)*t,-j3,path.flip,L1,L2,L_GRIP);
+    if(ik.status!=='ok')throw new Error('MoveL 경로가 작업 범위를 벗어납니다');
+    const j1=ScaraCore.nearest(-ik.theta1,path.ref1),j2=ScaraCore.nearest(-ik.theta2,path.ref2);
+    ScaraCore.validatePose({j1:j1*180/Math.PI,j2:j2*180/Math.PI,j3:j3*180/Math.PI});
+    return {j1,j2,j3};
+  }
+  async function finishWaypoint(target) {
+    const generation=motionGeneration,wasSingle=wpSingleShot;
+    wpPlaying=false;wpAwaiting=true;publishPose();
+    try {
+      await completeSceneMove(readPose());
+      if(generation!==motionGeneration)return;
+      wpAwaiting=false;window.__scaraCmdTarget=null;linearPath=null;
+      if(wasSingle){document.querySelectorAll('.wp-item').forEach(el=>el.classList.remove('active'));notifyMove();}
+      else if(waypoints.length>1){moveToWaypoint((wpPlayIdx+1)%waypoints.length,false);}
+      else{wpRunBtn.textContent='▶ 실행';wpRunBtn.classList.remove('running');}
+    } catch(error) {
+      if(generation===motionGeneration){stopAll(error.message);log(error.message,'#ff6666');}
+    }
+  }
+
+  let lastTime = -9999; // 첫 프레임 dtSec 폭발 방지
+  const targetFPS     = isLowEnd ? 30 : 60;
+  const frameInterval = 1000 / targetFPS;
+  let animationFrameId = null;
+
+  function animate(now) {
+    animationFrameId = requestAnimationFrame(animate);
+    if (now - lastTime < frameInterval) return;
+    const prevTime = lastTime > 0 ? lastTime : now - 16; // 첫 프레임 16ms로 고정
+    lastTime = now;
+
+    try {
+      if(window.__scaraMoveLCmd){
+        const cmd=window.__scaraMoveLCmd;window.__scaraMoveLCmd=null;
+        const from=getGripperTipWorld(),j3=cmd._j3!=null&&cmd._j3!==''?ScaraCore.finite(cmd._j3,-Math.PI,Math.PI):wristGrp.rotation.y;
+        const path={from,to:{x:ScaraCore.finite(cmd.x),z:ScaraCore.finite(cmd.z)},j3From:wristGrp.rotation.y,j3To:j3,ref1:j1Grp.rotation.y,ref2:forearmGrp.rotation.y,flip:false};
+        let best=Infinity;
+        for(const flip of [false,true]){
+          path.flip=flip;
+          try{const p=linearPose(path,0),e=Math.abs(p.j1-path.ref1)+Math.abs(p.j2-path.ref2);if(e<best){best=e;path.selectedFlip=flip;}}catch{}
+        }
+        path.flip=path.selectedFlip??false;
+        for(let i=0;i<=100;i++)linearPose(path,i/100);
+        beginMove(linearPose(path,1),cmd.speed,path);
+      }
+      if(window.__scaraMoveJCmd){
+        const cmd=window.__scaraMoveJCmd;window.__scaraMoveJCmd=null;
+        const j3=cmd._j3!=null&&cmd._j3!==''?ScaraCore.finite(cmd._j3,-Math.PI,Math.PI):wristGrp.rotation.y;
+        ScaraCore.validatePose({j1:cmd.j1*180/Math.PI,j2:cmd.j2*180/Math.PI,j3:j3*180/Math.PI});
+        beginMove({j1:cmd.j1,j2:cmd.j2,j3},cmd.speed);
+      }
+      if(window.__scaraMoveHomeCmd){
+        const cmd=window.__scaraMoveHomeCmd;window.__scaraMoveHomeCmd=null;
+        beginMove({j1:0,j2:Math.PI,j3:0},cmd.speed||4);
+      }
+      if(window.__scaraGripperCmd){
+        const cmd=window.__scaraGripperCmd;window.__scaraGripperCmd=null;
+        if(!SIMULATE_MODE)throw new Error('실물 그리퍼 드라이버가 설정되지 않았습니다');
+        const color=new THREE.Color(cmd.action==='close'?0xff3333:0x33ff88);
+        sensorLed.material.color.copy(color);sensorLed.material.emissive.copy(color).multiplyScalar(.6);
+        window.__scaraGripperWaitEnd=now+500;
+      }
+      if(window.__scaraGripperWaitEnd&&now>=window.__scaraGripperWaitEnd){window.__scaraGripperWaitEnd=null;notifyMove();}
+    }catch(error){stopAll(error.message);log(error.message,'#ff6666');}
+
+    if(wpPlaying){
+      wpInterpT=Math.min(1,wpInterpT+(+wpSpeedEl.value)*Math.min((now-prevTime)/1000,.05)*.08);
+      const t=1-Math.pow(1-wpInterpT,3);
+      const target=window.__scaraCmdTarget||waypoints[wpPlayIdx];
+      if(!target)stopScene();
+      else{
+        try{
+          const p=linearPath?linearPose(linearPath,t):{j1:wpSrcJ1+(target.j1-wpSrcJ1)*t,j2:wpSrcJ2+(target.j2-wpSrcJ2)*t,j3:wpSrcJ3+((target.j3||0)-wpSrcJ3)*t};
+          j1Grp.rotation.y=p.j1;forearmGrp.rotation.y=p.j2;wristGrp.rotation.y=p.j3;publishPose();
+          if(wpInterpT>=1)finishWaypoint(target);
+        }catch(error){stopAll(error.message);log(error.message,'#ff6666');}
+      }
+    } else if (animating) {
+      animT += 0.011;
+      const a1 = Math.sin(animT*0.8)*60;
+      const a2 = Math.sin(animT*1.2+0.5)*70-45;
+      j1Grp.rotation.y      = THREE.MathUtils.degToRad(a1);
+      forearmGrp.rotation.y = THREE.MathUtils.degToRad(a2);
+      syncMousePlane();
+      slJ1.value=Math.round(a1); lJ1.textContent=Math.round(a1)+'°';
+      slJ2.value=Math.round(a2); lJ2.textContent=Math.round(a2)+'°';
+    } else if (mouseTrack) {
+      applyIK();
+    }
+
+    publishPose();
+
+    // ── 카메라 위치 ──
+    camera.position.set(
+      radius*Math.sin(theta)*Math.cos(phi),
+      radius*Math.sin(phi)+1,
+      radius*Math.cos(theta)*Math.cos(phi)
+    );
+    camera.lookAt(1.2, 0.9, 0);
+
+    // ── 웨이포인트 잔상 불투명도 fade-in/out ──
+    waypoints.forEach((wp, i) => {
+      const isTarget  = wpPlaying && wpPlayIdx === i;
+      // on이면 목표 불투명도, off면 0으로 수렴
+      const targetOp  = wpGhostVisible
+        ? (isTarget ? WP_GHOST_MAX * 1.5 : WP_GHOST_MAX)
+        : 0;
+      if (wp.ghostOpacity < targetOp)
+        wp.ghostOpacity = Math.min(targetOp, wp.ghostOpacity + WP_GHOST_SPEED);
+      else if (wp.ghostOpacity > targetOp)
+        wp.ghostOpacity = Math.max(targetOp, wp.ghostOpacity - WP_GHOST_SPEED);
+      wp.ghostMat.opacity = wp.ghostOpacity;
+    });
+
+    // ══════════════════════════════════════════════════
+    // 렌더 파이프라인 (3단계, 깜빡임/연해짐 없음)
+    //
+    // STEP 1) 웨이포인트 잔상들을 rtWpGhost 에 합성
+    //         (투명 배경 위에 반투명 로봇 실루엣들만)
+    //
+    // STEP 2) 캔버스에 본체 씬 완전 불투명 렌더
+    //         (본체는 항상 선명 — 잔상과 완전 분리)
+    //
+    // STEP 3) rtWpGhost 를 캔버스 위에 NormalBlend 합성
+    //         (잔상이 본체 위에 반투명하게 보임)
+    // ══════════════════════════════════════════════════
+
+    const hasWpGhost = wpGhostVisible && waypoints.some(wp => wp.ghostOpacity > 0.005);
+
+    // ── STEP 1: 캔버스에 본체 씬 완전 불투명 렌더 ──
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(0x0a0a0f, 1);
+    renderer.clear(true, true, false);
+    renderer.render(scene, camera);
+
+    // ── STEP 2: 잔상 씬들을 같은 카메라로 본체 위에 직접 렌더 ──
+    // depthWrite:false 이므로 depth buffer를 건드리지 않고
+    // 본체 위에 반투명하게 올라감 → 본체가 절대 연해지지 않음
+    if (hasWpGhost) {
+      waypoints.forEach(wp => {
+        if (wp.ghostOpacity > 0.005) {
+          wp.ghostMat.opacity = wp.ghostOpacity;
+          renderer.render(wp.ghostScene, camera); // ★ 같은 camera 사용
+        }
+      });
+    }
+
+    // ── lock 잔상 (좌클릭 고정 시) ──
+    const lockTarget = ghostActive ? GHOST_MAX : 0;
+    if (ghostOpacity < lockTarget) ghostOpacity = Math.min(lockTarget, ghostOpacity + 0.04);
+    else if (ghostOpacity > lockTarget) ghostOpacity = Math.max(0, ghostOpacity - GHOST_DECAY);
+
+    if (ghostOpacity > 0.005) {
+      const rtCur = lockFlip ? rtLockB : rtLockA;
+      const rtPrv = lockFlip ? rtLockA : rtLockB;
+      lockFlip = !lockFlip;
+
+      wpMarkerGrp.visible = false;
+      if (wpLineObj) wpLineObj.visible = false;
+      renderer.setRenderTarget(rtCur);
+      renderer.setClearColor(0x0a0a0f, 1);
+      renderer.clear(true, true, false);
+      renderer.render(scene, camera);
+      renderer.setRenderTarget(null);
+      wpMarkerGrp.visible = true;
+      if (wpLineObj) wpLineObj.visible = true;
+
+      overlayMat.map      = rtPrv.texture;
+      overlayMat.opacity  = ghostOpacity;
+      overlayMat.blending = THREE.AdditiveBlending;
+      renderer.render(overlayScene, overlayCam);
+      overlayMat.blending = THREE.NormalBlending;
+    }
+  }
+
+  publishPose();
+
+  animationFrameId = requestAnimationFrame(animate);
+  window.addEventListener('pagehide', () => {
+    if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+    clearTimeout(orientationResizeTimer);
+    clearTimeout(wpToastTimer);
+
+    rtLockA.dispose();
+    rtLockB.dispose();
+    stopScene();sceneAbort.abort();
+    sceneTimers.forEach(clearTimeout);sceneTimers.clear();
+    waypoints.forEach(w=>{w.ghostMat.dispose();w.ghostScene.clear();});waypoints.length=0;
+    ScaraCore.disposeObject(scene,{textures:true});ScaraCore.disposeObject(overlayScene,{textures:true});
+    Object.values(carrierMats).forEach(m=>m.dispose());
+    renderer.renderLists.dispose();renderer.dispose();
+    delete window.ScaraScene;delete window.__scaraBlockWin;
+  }, { once: true });
+  // waypointPanel 위치를 #ui 렌더 후 재계산
+  later(() => { if (window.__layoutWaypointArea) window.__layoutWaypointArea(); }, 200);
+}
+</script>
+<!-- ══ HW CONTROLLER PANEL (from launcher) ══ -->
+<div id="hwPanel">
+  <h3>HW CONTROLLER <span class="hw-badge sim" id="modeBadge">SIM MODE</span><button class="panel-min-btn" id="hwMinBtn">–</button></h3>
+
+  <!-- WebSocket IP 입력 -->
+  <div id="wsIpRow" style="display:flex;gap:4px;margin-bottom:4px;">
+    <input id="wsIpInput" type="text" placeholder="라즈베리파이 IP (예: 192.168.0.10)"
+      style="flex:1;padding:4px 6px;border-radius:4px;border:1px solid #336;background:#0a0a1a;color:#aac;font-size:10px;"/>
+  </div>
+
+  <div id="bleStatus">
+    <span id="bleDot"></span>
+    <span id="bleStatusText">WebSocket 미연결</span>
+    <span id="bleDeviceName" style="margin-left:auto;color:#334;"></span>
+  </div>
+
+  <!-- J1 -->
+  <div class="axis-row">
+    <span class="axis-label">J1</span>
+    <div class="axis-bar-wrap"><div class="axis-bar j1" id="barJ1" style="width:50%"></div></div>
+    <span class="axis-val" id="valJ1">0.0°</span>
+    <span class="axis-pwm" id="pwmJ1">PWM:0</span>
+  </div>
+  <!-- J2 -->
+  <div class="axis-row">
+    <span class="axis-label">J2</span>
+    <div class="axis-bar-wrap"><div class="axis-bar j2" id="barJ2" style="width:50%"></div></div>
+    <span class="axis-val" id="valJ2">-90.0°</span>
+    <span class="axis-pwm" id="pwmJ2">PWM:0</span>
+  </div>
+  <!-- J3 (손목 회전) -->
+  <div class="axis-row">
+    <span class="axis-label" style="color:#ffcc44">J3</span>
+    <div class="axis-bar-wrap"><div class="axis-bar" id="barJ3" style="width:0%;background:linear-gradient(90deg,#ffcc44,#ffee88)"></div></div>
+    <span class="axis-val" id="valJ3">0.0°</span>
+    <span class="axis-pwm" id="pwmJ3">PWM:0</span>
+  </div>
+
+  <!-- ★ 직접 제어 슬라이더 (HW 모드 전용) -->
+  <div id="hwDirectCtrl" style="margin:6px 0 4px;padding:6px 8px;border-radius:6px;background:rgba(100,180,255,0.07);border:1px solid rgba(100,180,255,0.25);">
+    <div style="font-size:9px;color:#6699cc;margin-bottom:5px;letter-spacing:0.5px;">▶ 직접 관절 제어 (HW 모드)</div>
+
+    <!-- J1 슬라이더 -->
+    <div style="margin-bottom:5px;">
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#88aacc;margin-bottom:2px;">
+        <span>J1 (상완)</span>
+        <span id="hwLabelJ1" style="color:#66ccff">0°</span>
+      </div>
+      <input type="range" id="hwSliderJ1" min="-180" max="180" value="0" step="1"
+        style="width:100%;accent-color:#66ccff;">
+    </div>
+
+    <!-- J2 슬라이더 -->
+    <div style="margin-bottom:5px;">
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#88aacc;margin-bottom:2px;">
+        <span>J2 (전완)</span>
+        <span id="hwLabelJ2" style="color:#66ccff">180°</span>
+      </div>
+      <input type="range" id="hwSliderJ2" min="-180" max="180" value="180" step="1"
+        style="width:100%;accent-color:#66ccff;">
+    </div>
+
+    <!-- J3 슬라이더 (손목 회전) -->
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#886633;margin-bottom:2px;">
+        <span>J3 (손목)</span>
+        <span id="labelJ3" style="color:#ffcc44">0°</span>
+      </div>
+      <input type="range" id="sliderJ3" min="-180" max="180" value="0" step="1"
+        style="width:100%;accent-color:#ffcc44;"
+        oninput="document.getElementById('labelJ3').textContent=this.value+'°'">
+    </div>
+
+    <div style="margin-top:7px;">
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#88aacc;margin-bottom:2px;">
+        <span>LIVE SPEED</span>
+        <span id="hwLabelSpeed" style="color:#aaffcc">1200 st/s</span>
+      </div>
+      <input type="range" id="hwSpeed" min="120" max="3000" value="1200" step="20"
+        style="width:100%;accent-color:#66ffaa;">
+    </div>
+  </div>
+
+  <!-- 엔코더 RAW 값 (3축) -->
+  <div class="enc-row">
+    <span>AS5600 RAW</span>
+    <span>J1:<span id="rawJ1">—</span> J2:<span id="rawJ2">—</span> J3:<span id="rawJ3">—</span></span>
+  </div>
+
+  <!-- 마그넷 상태 (3축) -->
+  <div class="magnet-row">
+    <div class="magnet-dot"><span id="magJ1" class="mag-none"></span><span>J1</span></div>
+    <div class="magnet-dot"><span id="magJ2" class="mag-none"></span><span>J2</span></div>
+    <div class="magnet-dot"><span id="magJ3" class="mag-none"></span><span>J3</span></div>
+  </div>
+
+  <div class="hw-btn-row">
+    <button class="hw-btn" id="btnConnect">🟢 WS 연결</button>
+    <button class="hw-btn" id="btnStart">▶ 제어 시작</button>
+    <button class="hw-btn" id="btnMode">SIM↔HW</button>
+  </div>
+
+  <!-- 홈 복귀 버튼 -->
+  <div style="margin-top:8px;">
+        <button class="hw-btn" id="btnSetHome"
+      style="width:100%;background:rgba(80,255,170,0.13);border:1px solid rgba(80,255,170,0.45);color:#88ffcc;font-size:11px;padding:8px 6px;border-radius:6px;cursor:pointer;letter-spacing:0.06em;margin-bottom:6px;">
+      HOME SET
+    </button>
+<button class="hw-btn btn-full" id="btnGoHome"
+      style="width:100%;background:rgba(255,180,60,0.13);border:1px solid rgba(255,180,60,0.45);color:#ffcc55;font-size:11px;padding:8px 6px;border-radius:6px;cursor:pointer;letter-spacing:0.06em;">
+      🏠 홈으로 복귀
+    </button>
+  </div>
+
+  <!-- 홈 오프셋 저장 상태 -->
+  <div id="homeSavedStatus" style="margin-top:6px;font-size:9px;color:#8899aa;display:none;">
+    <div style="margin-bottom:3px;color:#99bbdd;letter-spacing:0.05em;">● 홈 위치 저장됨</div>
+    <div id="homeSavedJ1" style="color:#66ccff;">J1: —</div>
+    <div id="homeSavedJ2" style="color:#66ccff;">J2: —</div>
+    <div id="homeSavedJ3"  style="color:#ffcc44;">J3: —</div>
+  </div>
+
+  <div id="hwLog"></div>
+</div>
+
+<!-- ══ 모터 컨트롤러 + 실행 스크립트 (from launcher) ══ -->
+<script src="hardware.js"></script>
+
+<!-- ══ 패널 최소화/복원 통합 로직 ══ -->
+<script>
+(function() {
+  // ── 웨이포인트 패널 ──
+  const wpPanel = document.getElementById('waypointPanel');
+  const wpTab   = document.getElementById('wpTab');
+  document.getElementById('wpMinBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    wpPanel.style.display = 'none';
+    wpTab.style.display   = 'flex';
+  });
+  wpTab.addEventListener('click', () => {
+    wpPanel.style.display = 'block';
+    wpTab.style.display   = 'none';
+  });
+
+  // ── 웨이포인트 패널 위치: #ui 아래에 자동 배치 ──
+  const wpList = document.getElementById('wpList');
+  function layoutWaypointArea() {
+    if (window.innerWidth <= 640) {
+      wpPanel.style.top = '16px';
+      wpPanel.style.left = '16px';
+      wpList.style.maxHeight = '';
+      wpTab.style.top = '16px';
+      return;
+    }
+    const uiEl = document.getElementById('ui');
+    const carrierEl = document.getElementById('carrierPanel');
+    const uiBottom = uiEl.getBoundingClientRect().bottom;
+    const top = uiBottom + 48;
+    wpPanel.style.top = top + 'px';
+    wpPanel.style.left = '16px';
+    wpTab.style.top = Math.min(top, window.innerHeight - 60) + 'px';
+
+    const chrome = wpPanel.offsetHeight - wpList.offsetHeight;
+    let bottomLimit = window.innerHeight - 16;
+    if (carrierEl && getComputedStyle(carrierEl).display !== 'none') {
+      const carrierTop = carrierEl.getBoundingClientRect().top;
+      if (carrierTop > top) bottomLimit = Math.min(bottomLimit, carrierTop - 16);
+    }
+    const available = bottomLimit - top - chrome;
+    wpList.style.maxHeight = Math.max(60, Math.min(360, available)) + 'px';
+  }
+  window.addEventListener('load', () => requestAnimationFrame(layoutWaypointArea));
+  window.__layoutWaypointArea = layoutWaypointArea;
+
+  // ── 캐리어 패널 (carrierPanelMinimized 플래그 경유) ──
+  document.getElementById('carrierMinBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    window.carrierPanelMinimized = true;
+    window.updateCarrierUI();
+  });
+  document.getElementById('carrierTab').addEventListener('click', () => {
+    window.carrierPanelMinimized = false;
+    window.updateCarrierUI();
+  });
+
+  // ── HW 패널 ──
+  const hwPanel = document.getElementById('hwPanel');
+  const hwTab   = document.getElementById('hwTab');
+  document.getElementById('hwMinBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    hwPanel.style.display = 'none';
+    hwTab.style.display   = 'flex';
+  });
+  hwTab.addEventListener('click', () => {
+    hwPanel.style.display = 'block';
+    hwTab.style.display   = 'none';
+  });
+
+  // ── 조작 가이드 모달 ──
+  const helpOverlay  = document.getElementById('helpModalOverlay');
+  const helpOpenBtn  = document.getElementById('helpOpenBtn');
+  const helpCloseBtn = document.getElementById('helpModalClose');
+
+  function openHelpModal() {
+    helpOverlay.classList.remove('hidden');
+    helpOpenBtn.style.display = 'none';
+  }
+  function closeHelpModal() {
+    helpOverlay.classList.add('hidden');
+    helpOpenBtn.style.display = 'block';
+  }
+
+  helpCloseBtn.addEventListener('click', closeHelpModal);
+  helpOverlay.addEventListener('click', e => {
+    if (e.target === helpOverlay) closeHelpModal();
+  });
+  helpOpenBtn.addEventListener('click', openHelpModal);
+
+  // I 키 토글
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key.toLowerCase() === 'i') {
+      e.preventDefault();
+      if (helpOverlay.classList.contains('hidden')) openHelpModal();
+      else closeHelpModal();
+    }
+  });
+})();
+</script>
+
+<!-- ══ 블록 코딩 에디터 ══ -->
+<script src="block_bridge.js"></script>
+</body>
+</html>

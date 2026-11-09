@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+tests/artifacts/
+.venv/
+venv/
+build/
+dist/
+*.bak*
+*.zip
+backups/
+.env
+.env.*

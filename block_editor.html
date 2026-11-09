@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCARA Block Program</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;font-family:'Courier New',monospace;background:#080c14;color:#cdd;overflow:hidden;}
+#app{display:grid;grid-template-columns:200px 1fr 260px;grid-template-rows:48px 1fr 44px;height:100vh;}
+#header{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:0 16px;background:#0a0f1a;border-bottom:1px solid rgba(80,180,255,0.18);}
+#header h1{font-size:13px;color:#55ccff;letter-spacing:0.2em;flex:1;}
+.hdr-badge{font-size:9px;padding:3px 8px;border-radius:4px;letter-spacing:0.1em;}
+.hdr-badge.sim{background:rgba(80,140,255,0.12);border:1px solid rgba(80,140,255,0.35);color:#6699ff;}
+#runBtn{padding:7px 16px;border-radius:6px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:0.08em;background:rgba(80,220,140,0.14);border:1px solid rgba(80,220,140,0.45);color:#44ffaa;transition:all .2s;}
+#runBtn:hover{background:rgba(80,220,140,0.25);}
+#runBtn.running{background:rgba(255,160,60,0.14);border-color:rgba(255,160,60,0.5);color:#ffaa44;}
+#stopBtn{padding:7px 12px;border-radius:6px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:0.08em;background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.35);color:#ff7777;transition:all .2s;}
+#stopBtn:hover{background:rgba(255,80,80,0.2);}
+#exportBtn{padding:7px 12px;border-radius:6px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:0.08em;background:rgba(160,120,255,0.1);border:1px solid rgba(160,120,255,0.35);color:#bb99ff;transition:all .2s;}
+#exportBtn:hover{background:rgba(160,120,255,0.2);}
+#palette{background:#090d18;border-right:1px solid rgba(80,140,255,0.15);padding:10px 8px;overflow-y:auto;}
+#palette h2{font-size:9px;color:#334466;letter-spacing:0.2em;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid rgba(80,140,255,0.1);}
+.palette-block{padding:9px 10px;border-radius:7px;margin-bottom:5px;cursor:grab;font-size:10px;letter-spacing:0.05em;line-height:1.4;border-left:3px solid;user-select:none;transition:opacity .15s,transform .12s;position:relative;}
+.palette-block:hover{opacity:0.85;transform:translateX(2px);}
+.palette-block:active{cursor:grabbing;}
+.pb-move{background:rgba(77,171,247,0.12);border-color:#4dabf7;color:#88ccff;}
+.pb-movej{background:rgba(120,100,255,0.12);border-color:#8877ff;color:#aaa0ff;}
+.pb-wait{background:rgba(255,212,59,0.10);border-color:#ffd43b;color:#ffe066;}
+.pb-grip{background:rgba(80,220,140,0.10);border-color:#44ffaa;color:#66ffbb;}
+.pb-loop{background:rgba(255,107,107,0.10);border-color:#ff6b6b;color:#ff9999;}
+.pb-if{background:rgba(255,160,60,0.10);border-color:#ffa94d;color:#ffcc88;}
+.pb-set{background:rgba(180,90,255,0.10);border-color:#bb55ff;color:#cc88ff;}
+.pb-home{background:rgba(60,200,255,0.10);border-color:#3ccfff;color:#77eeff;}
+.pb-stop{background:rgba(255,80,80,0.10);border-color:#ff5555;color:#ff8888;}
+.pb-tag{font-size:8px;opacity:0.55;display:block;margin-top:2px;}
+#canvas-wrap{position:relative;overflow:hidden;background:#0a0e18;}
+#canvas-bg{position:absolute;inset:0;pointer-events:none;}
+#program-area{position:absolute;inset:0;overflow:auto;padding:16px;}
+#drop-zone{min-height:100%;min-width:300px;padding-bottom:120px;position:relative;}
+.prog-block{display:flex;align-items:stretch;margin-bottom:6px;position:relative;border-radius:8px;overflow:visible;animation:blockIn .2s ease;}
+@keyframes blockIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.prog-block-inner{flex:1;padding:10px 12px;border-radius:8px;border-left:3px solid;display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:default;position:relative;min-height:44px;transition:box-shadow .15s;}
+.prog-block-inner:hover{box-shadow:0 0 0 1px rgba(255,255,255,0.08);}
+.prog-block.dragging>.prog-block-inner{opacity:0.35;}
+.prog-block.drag-over-top::before{content:'';position:absolute;top:-3px;left:0;right:0;height:3px;background:#44ffaa;border-radius:2px;z-index:10;}
+.prog-block.drag-over-bot::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:3px;background:#44ffaa;border-radius:2px;z-index:10;}
+.block-num{font-size:9px;color:#334;min-width:18px;text-align:right;flex-shrink:0;}
+.block-icon{font-size:15px;flex-shrink:0;}
+.block-label{font-size:11px;flex:1;letter-spacing:0.05em;}
+.block-params{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-left:auto;}
+.param-group{display:flex;align-items:center;gap:3px;background:rgba(0,0,0,0.25);border-radius:5px;padding:3px 7px;}
+.param-group label{font-size:8px;color:#445;letter-spacing:0.08em;white-space:nowrap;}
+.param-group input,.param-group select{background:transparent;border:none;outline:none;font-family:'Courier New',monospace;font-size:10px;color:#ccd;width:52px;text-align:right;}
+.param-group select{width:80px;cursor:pointer;}
+.param-group select option{background:#0a0e18;}
+.block-del{width:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#223;cursor:pointer;border-radius:0 8px 8px 0;transition:all .15s;background:rgba(0,0,0,0.1);}
+.block-del:hover{color:#ff6666;background:rgba(255,80,80,0.1);}
+.prog-block.exec-active>.prog-block-inner{box-shadow:0 0 0 2px #44ffaa, 0 0 12px rgba(68,255,170,0.3);}
+.prog-block.exec-done>.prog-block-inner{opacity:0.45;}
+#drop-placeholder{height:44px;border:2px dashed rgba(68,255,170,0.35);border-radius:8px;margin-bottom:6px;display:none;background:rgba(68,255,170,0.04);}
+#empty-hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-60%);text-align:center;pointer-events:none;color:#1c2233;}
+#empty-hint .eh-icon{font-size:36px;display:block;margin-bottom:8px;}
+#empty-hint p{font-size:11px;letter-spacing:0.1em;line-height:1.8;}
+#right-panel{background:#090d18;border-left:1px solid rgba(80,140,255,0.15);display:flex;flex-direction:column;overflow:hidden;}
+#wp-section{padding:10px;border-bottom:1px solid rgba(80,140,255,0.1);flex-shrink:0;}
+#wp-section h2{font-size:9px;color:#334466;letter-spacing:0.2em;margin-bottom:7px;}
+#wp-list-r{display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto;}
+#wp-list-r::-webkit-scrollbar{width:3px;}
+#wp-list-r::-webkit-scrollbar-thumb{background:rgba(120,80,255,0.3);border-radius:2px;}
+.wp-chip{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;border:1px solid rgba(120,80,255,0.2);background:rgba(120,80,255,0.06);cursor:pointer;transition:all .12s;font-size:10px;}
+.wp-chip:hover{background:rgba(120,80,255,0.14);}
+.wp-chip-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.wp-chip-name{flex:1;color:#aac;}
+.wp-chip-coord{font-size:8px;color:#445;}
+.wp-chip-add{margin-left:auto;font-size:11px;color:#445;padding:0 2px;transition:color .12s;}
+.wp-chip:hover .wp-chip-add{color:#44ffaa;}
+.wp-empty{font-size:9px;color:#223;padding:6px 2px;letter-spacing:0.08em;}
+#var-section{padding:10px;border-bottom:1px solid rgba(80,140,255,0.1);flex-shrink:0;}
+#var-section h2{font-size:9px;color:#334466;letter-spacing:0.2em;margin-bottom:7px;}
+.var-row{display:flex;gap:5px;margin-bottom:5px;}
+.var-row input{flex:1;background:rgba(0,0,0,0.3);border:1px solid rgba(80,140,255,0.2);border-radius:5px;padding:5px 7px;font-family:inherit;font-size:10px;color:#aac;outline:none;}
+.var-row input:focus{border-color:rgba(80,140,255,0.5);}
+.var-add-btn{padding:5px 10px;border-radius:5px;font-family:inherit;font-size:10px;cursor:pointer;background:rgba(80,140,255,0.1);border:1px solid rgba(80,140,255,0.3);color:#88aaff;}
+#var-list{display:flex;flex-direction:column;gap:3px;max-height:100px;overflow-y:auto;}
+.var-item{display:flex;align-items:center;gap:5px;font-size:10px;padding:3px 5px;border-radius:4px;background:rgba(80,140,255,0.05);}
+.var-item-name{color:#88aaff;flex:1;}
+.var-item-val{color:#aac;min-width:40px;text-align:right;}
+.var-item-del{color:#334;cursor:pointer;padding:0 2px;transition:color .12s;}
+.var-item-del:hover{color:#ff6666;}
+#log-section{flex:1;padding:10px;overflow:hidden;display:flex;flex-direction:column;}
+#log-section h2{font-size:9px;color:#334466;letter-spacing:0.2em;margin-bottom:7px;flex-shrink:0;}
+#log-out{flex:1;overflow-y:auto;font-size:9px;letter-spacing:0.04em;line-height:1.7;}
+#log-out::-webkit-scrollbar{width:3px;}
+#log-out::-webkit-scrollbar-thumb{background:rgba(80,140,255,0.2);border-radius:2px;}
+.log-line{padding:1px 0;}
+.log-info{color:#4466aa;}
+.log-ok{color:#44aa66;}
+.log-warn{color:#aa8833;}
+.log-err{color:#aa4444;}
+#statusbar{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 14px;background:#060a12;border-top:1px solid rgba(80,140,255,0.12);font-size:9px;color:#334;letter-spacing:0.1em;}
+#status-msg{flex:1;}
+.status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;}
+.status-dot.idle{background:#2a3a55;}
+.status-dot.run{background:#44ffaa;box-shadow:0 0 5px #44ffaa88;animation:dotPulse 1s infinite;}
+.status-dot.err{background:#ff5555;}
+@keyframes dotPulse{0%,100%{opacity:1}50%{opacity:.4}}
+#drag-ghost{position:fixed;pointer-events:none;z-index:9999;padding:8px 12px;border-radius:7px;border-left:3px solid;font-family:'Courier New',monospace;font-size:10px;opacity:0.85;transform:translate(-50%,-50%);display:none;white-space:nowrap;}
+#prog-bar{height:2px;background:rgba(68,255,170,0.12);position:relative;overflow:hidden;}
+#prog-fill{height:100%;background:#44ffaa;width:0%;transition:width .3s;box-shadow:0 0 6px #44ffaa88;}
+#help-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(4px);z-index:500;display:flex;align-items:center;justify-content:center;animation:helpIn .2s ease;}
+#help-overlay.hidden{display:none;}
+@keyframes helpIn{from{opacity:0}to{opacity:1}}
+#help-modal{background:rgba(8,8,22,0.97);border:1px solid rgba(80,140,255,0.4);border-radius:14px;padding:22px 26px 20px;min-width:320px;max-width:500px;width:90vw;max-height:80vh;overflow-y:auto;font-family:'Courier New',monospace;position:relative;box-shadow:0 0 40px rgba(40,80,255,0.18),0 8px 40px rgba(0,0,0,0.6);animation:modalIn .22s cubic-bezier(0.34,1.4,0.64,1);}
+@keyframes modalIn{from{opacity:0;transform:scale(0.92)}to{opacity:1;transform:scale(1)}}
+#help-modal::-webkit-scrollbar{width:4px;}
+#help-modal::-webkit-scrollbar-thumb{background:rgba(80,140,255,0.3);border-radius:2px;}
+#help-modal-close{position:absolute;top:12px;right:14px;width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#667;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;line-height:1;font-family:inherit;}
+#help-modal-close:hover{background:rgba(255,80,80,0.15);border-color:rgba(255,80,80,0.4);color:#f88;}
+#help-modal h2{font-size:11px;color:#88aaff;letter-spacing:0.18em;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid rgba(80,140,255,0.2);}
+.help-section{margin-bottom:14px;}
+.help-section h3{font-size:9px;color:#556688;letter-spacing:0.18em;margin-bottom:8px;}
+.help-row{display:flex;align-items:baseline;gap:10px;margin-bottom:6px;font-size:10px;}
+.help-key{flex-shrink:0;padding:2px 7px;border-radius:4px;background:rgba(80,140,255,0.1);border:1px solid rgba(80,140,255,0.3);color:#88aaff;font-size:9px;letter-spacing:0.05em;white-space:nowrap;}
+.help-desc{color:#778;line-height:1.5;}
+.help-tip{margin-top:12px;padding:8px 10px;border-radius:6px;background:rgba(80,255,160,0.05);border:1px solid rgba(80,255,160,0.15);font-size:9px;color:#3a6650;letter-spacing:0.06em;line-height:1.7;}
+#help-hint-btn{position:fixed;bottom:54px;right:12px;z-index:200;background:rgba(10,10,20,0.85);border:1px solid rgba(80,140,255,0.3);border-radius:7px;padding:6px 10px;font-family:'Courier New',monospace;font-size:9px;color:#4466aa;cursor:pointer;letter-spacing:0.1em;backdrop-filter:blur(6px);transition:all .2s;}
+#help-hint-btn:hover{border-color:rgba(80,140,255,0.7);color:#88aaff;}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="header">
+  <h1>⬛ SCARA BLOCK PROGRAM</h1>
+  <span class="hdr-badge sim">SCARA-3DOF</span>
+  <button id="exportBtn">⬇ 내보내기</button>
+  <button id="runBtn">▶ 실행</button>
+  <button id="stopBtn">■ 정지</button>
+</div>
+<div id="palette">
+  <h2>BLOCKS</h2>
+  <div class="palette-block pb-move" draggable="true" data-type="MoveL">🎯 MoveL<span class="pb-tag">직선 이동 (XZ 좌표)</span></div>
+  <div class="palette-block pb-movej" draggable="true" data-type="MoveJ">🔗 MoveJ<span class="pb-tag">관절 이동 (J1·J2 각도)</span></div>
+  <div class="palette-block pb-home" draggable="true" data-type="MoveHome">🏠 Home<span class="pb-tag">홈 위치로 복귀</span></div>
+  <div class="palette-block pb-grip" draggable="true" data-type="Gripper">✊ Gripper<span class="pb-tag">그리퍼 열기/닫기</span></div>
+  <div class="palette-block pb-wait" draggable="true" data-type="Wait">⏱ Wait<span class="pb-tag">지연 시간 (초)</span></div>
+  <div class="palette-block pb-loop" draggable="true" data-type="Loop">🔁 Loop<span class="pb-tag">N회 반복</span></div>
+<div class="palette-block pb-loop" draggable="true" data-type="EndLoop"><span class="pb-icon">↩</span><span class="pb-label">EndLoop</span></div>
+  <div class="palette-block pb-if" draggable="true" data-type="If">❓ If<span class="pb-tag">조건 분기</span></div>
+  <div class="palette-block pb-set" draggable="true" data-type="SetVar">📝 Set Var<span class="pb-tag">변수 값 설정</span></div>
+  <div class="palette-block pb-stop" draggable="true" data-type="Stop">🛑 Stop<span class="pb-tag">프로그램 종료</span></div>
+</div>
+<div id="canvas-wrap">
+  <canvas id="canvas-bg"></canvas>
+  <div id="prog-bar"><div id="prog-fill"></div></div>
+  <div id="program-area">
+    <div id="drop-zone">
+      <div id="drop-placeholder"></div>
+      <div id="empty-hint"><span class="eh-icon">⬅</span><p>왼쪽 팔레트에서 블록을<br>이곳으로 드래그하세요</p></div>
+    </div>
+  </div>
+</div>
+<div id="right-panel">
+  <div id="wp-section">
+    <h2>WAYPOINTS <span id="wp-count" style="color:#556">(0)</span></h2>
+    <div id="wp-list-r"><div class="wp-empty">웨이포인트 없음</div></div>
+  </div>
+  <div id="var-section">
+    <h2>VARIABLES</h2>
+    <div class="var-row"><input id="varNameIn" placeholder="변수명" maxlength="12"><input id="varValIn" placeholder="초기값" style="max-width:70px"><button class="var-add-btn" id="varAddBtn">+</button></div>
+    <div id="var-list"></div>
+  </div>
+  <div id="log-section"><h2>CONSOLE</h2><div id="log-out"></div></div>
+</div>
+<div id="statusbar"><span class="status-dot idle" id="status-dot"></span><span id="status-msg">대기 중</span><span id="status-step"></span></div>
+</div>
+<div id="drag-ghost"></div>
+<button id="help-hint-btn" title="조작 가이드 (I)">[ I ] 가이드</button>
+<div id="help-overlay" class="hidden">
+  <div id="help-modal">
+    <button id="help-modal-close">✕</button>
+    <h2>⬛ SCARA BLOCK EDITOR — 조작 가이드</h2>
+    <div class="help-section">
+      <h3>── 블록 추가</h3>
+      <div class="help-row"><span class="help-key">드래그</span><span class="help-desc">왼쪽 팔레트에서 블록을 프로그램 영역으로 드래그해 추가</span></div>
+      <div class="help-row"><span class="help-key">WP ＋</span><span class="help-desc">오른쪽 웨이포인트 목록에서 ＋를 클릭하면 MoveL 블록으로 자동 추가</span></div>
+    </div>
+    <div class="help-section">
+      <h3>── 블록 편집</h3>
+      <div class="help-row"><span class="help-key">드래그 재정렬</span><span class="help-desc">블록을 드래그해 순서 변경</span></div>
+      <div class="help-row"><span class="help-key">✕</span><span class="help-desc">블록 오른쪽 ✕ 버튼으로 삭제</span></div>
+      <div class="help-row"><span class="help-key">파라미터 입력</span><span class="help-desc">각 블록의 수치 직접 입력 (X, Z, 각도, 속도 등)</span></div>
+    </div>
+    <div class="help-section">
+      <h3>── 블록 종류</h3>
+      <div class="help-row"><span class="help-key">🎯 MoveL</span><span class="help-desc">직선 이동 — X·Z 좌표 지정. 웨이포인트 ＋로 자동 채움</span></div>
+      <div class="help-row"><span class="help-key">🔗 MoveJ</span><span class="help-desc">관절 이동 — J1·J2 각도 직접 지정</span></div>
+      <div class="help-row"><span class="help-key">🏠 Home</span><span class="help-desc">홈 위치로 복귀</span></div>
+      <div class="help-row"><span class="help-key">✊ Gripper</span><span class="help-desc">그리퍼 열기 / 닫기</span></div>
+      <div class="help-row"><span class="help-key">⏱ Wait</span><span class="help-desc">지연 시간 (초 단위)</span></div>
+      <div class="help-row"><span class="help-key">🔁 Loop</span><span class="help-desc">N회 반복 — Loop 블록 이후 블록들이 반복 실행</span></div>
+      <div class="help-row"><span class="help-key">❓ If</span><span class="help-desc">조건 분기 — 변수 값 비교, 거짓이면 다음 블록 건너뜀</span></div>
+      <div class="help-row"><span class="help-key">📝 SetVar</span><span class="help-desc">변수 값 설정</span></div>
+      <div class="help-row"><span class="help-key">🛑 Stop</span><span class="help-desc">프로그램 즉시 종료</span></div>
+    </div>
+    <div class="help-section">
+      <h3>── 웨이포인트 활용</h3>
+      <div class="help-row"><span class="help-key">메인창 우클릭</span><span class="help-desc">3D 뷰에서 우클릭 → 웨이포인트 저장 → 에디터에 자동 동기화</span></div>
+      <div class="help-row"><span class="help-key">WP 목록 ＋</span><span class="help-desc">저장된 웨이포인트 클릭 시 해당 좌표의 MoveL 블록 자동 생성</span></div>
+    </div>
+    <div class="help-section">
+      <h3>── 실행 / 저장</h3>
+      <div class="help-row"><span class="help-key">▶ 실행</span><span class="help-desc">프로그램 순차 실행 — 메인 창의 로봇이 실제로 움직임</span></div>
+      <div class="help-row"><span class="help-key">■ 정지</span><span class="help-desc">실행 중단</span></div>
+      <div class="help-row"><span class="help-key">⬇ 내보내기</span><span class="help-desc">현재 프로그램을 JSON 파일로 저장</span></div>
+    </div>
+    <div class="help-section">
+      <h3>── 단축키</h3>
+      <div class="help-row"><span class="help-key">I</span><span class="help-desc">이 가이드 열기 / 닫기</span></div>
+      <div class="help-row"><span class="help-key">ESC</span><span class="help-desc">이 가이드 닫기</span></div>
+    </div>
+    <div class="help-tip">💡 메인 창을 열어둔 상태에서 실행하면 3D 뷰의 로봇이 블록 순서대로 움직입니다.</div>
+  </div>
+</div>
+<script src="scara_core.js"></script>
+<script src="block_editor.js"></script>
+</body>
+</html>
