@@ -1,34 +1,51 @@
 #!/usr/bin/env python3
-"""SCARA V2: python scara_main.py [--j1 PORT --j2 PORT --j3 PORT]."""
+"""Serve the dashboard and robot controller from one Raspberry Pi process."""
 import argparse
+import asyncio
 import logging
 import signal
-import threading
+from aiohttp import web
 from control_server import ScaraWSServer
+from web_app import create_app, RUNTIME
+
+async def serve(args):
+    ports={a:getattr(args,a) for a in ('j1','j2','j3') if getattr(args,a)}
+    app=create_app(ScaraWSServer(arduino_ports=ports),demo=args.demo)
+    runtime=app[RUNTIME]
+    runner=web.AppRunner(app,shutdown_timeout=5)
+    loop=asyncio.get_running_loop()
+    previous={}
+    for sig in (signal.SIGINT,signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig,runtime.request_stop,'OS signal')
+        except NotImplementedError:
+            previous[sig]=signal.signal(sig,lambda *_:loop.call_soon_threadsafe(runtime.request_stop,'OS signal'))
+    try:
+        await runner.setup()
+        site=web.TCPSite(runner,args.host,args.port)
+        await site.start()
+        logging.info('Dashboard: http://%s:%s (same-port /ws)',args.host,args.port)
+        await runtime.stop_event.wait()
+    finally:
+        await runner.cleanup()
+        for sig,handler in previous.items():
+            signal.signal(sig,handler)
+    return 0 if runtime.closed else 1
 
 def main():
-    logging.basicConfig(level=logging.INFO,format='[%(asctime)s] %(levelname)s %(message)s')
-    parser=argparse.ArgumentParser(description='SCARA V2 WebSocket controller')
+    parser=argparse.ArgumentParser(description='SCARA web dashboard + robot controller')
+    parser.add_argument('--host',default='0.0.0.0')
+    parser.add_argument('--port',type=int,default=8080)
+    parser.add_argument('--demo',action='store_true',help='Serve simulator without opening USB ports')
     for axis in ('j1','j2','j3'):
         parser.add_argument('--'+axis,help='Matching V2 Arduino port; unspecified axes are detected')
     args=parser.parse_args()
-    ports={a:getattr(args,a) for a in ('j1','j2','j3') if getattr(args,a)}
-    server=ScaraWSServer(arduino_ports=ports)
-    signal.signal(signal.SIGINT,lambda *_:server.stop())
-    signal.signal(signal.SIGTERM,lambda *_:server.stop())
-    def quit_reader():
-        try:
-            while input().strip().lower()!='q':
-                pass
-            server.stop()
-        except (EOFError,OSError):
-            pass
-    threading.Thread(target=quit_reader,daemon=True,name='quit-reader').start()
-    logging.info('WebSocket: ws://%s:8765 ? q + Enter to stop',server._dash._local_ip)
+    if not 1<=args.port<=65535:parser.error('port must be 1..65535')
+    logging.basicConfig(level=logging.INFO,format='[%(asctime)s] %(levelname)s %(name)s: %(message)s')
     try:
-        server.run()
-    finally:
-        server.stop()
+        return asyncio.run(serve(args))
+    except KeyboardInterrupt:
+        return 0
 
 if __name__=='__main__':
-    main()
+    raise SystemExit(main())

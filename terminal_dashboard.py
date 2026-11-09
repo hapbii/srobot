@@ -1,7 +1,7 @@
 import threading
 import time
 import sys
-WS_PORT=8765
+WS_PORT=8080
 C_RESET  = '\033[0m'
 C_CYAN   = '\033[96m'
 C_GREEN  = '\033[92m'
@@ -118,10 +118,10 @@ class TerminalDashboard:
         ws_dot = C_GREEN+'●'+C_RESET if ws_ok else C_RED+'○'+C_RESET
         if ws_ok:
             ctrl_badge = (C_GREEN+C_BOLD+' ▶ 제어 중 '+C_RESET) if controlling else (C_DIM+' ■ 대기 중 '+C_RESET)
-            ws_label = (f"ws://{lip}:{WS_PORT}  클라이언트 {ws_n}개  "
+            ws_label = (f"http://{lip}:{WS_PORT}  클라이언트 {ws_n}개  "
                         f"{C_YELLOW}{hz:.0f}{C_RESET} pkt/s  {ctrl_badge}")
         else:
-            ws_label = f"ws://{lip}:{WS_PORT}  {C_RED}연결 대기중{C_RESET}"
+            ws_label = f"http://{lip}:{WS_PORT}  {C_RED}연결 대기중{C_RESET}"
         out += f"{C_BOLD}{C_CYAN}║{C_RESET}  WebSocket {ws_dot} {ws_label}\n"
         out += f"{C_BOLD}{C_CYAN}╠{'═'*W}╣{C_RESET}\n"
 

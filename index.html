@@ -3088,7 +3088,9 @@ w.occupied = true;
   publishPose();
 
   animationFrameId = requestAnimationFrame(animate);
-  window.addEventListener('pagehide', () => {
+  let sceneDisposed=false;
+  function disposeScene(){
+    if(sceneDisposed)return;sceneDisposed=true;
     if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
     clearTimeout(orientationResizeTimer);
     clearTimeout(wpToastTimer);
@@ -3102,9 +3104,12 @@ w.occupied = true;
     Object.values(carrierMats).forEach(m=>m.dispose());
     renderer.renderLists.dispose();renderer.dispose();
     delete window.ScaraScene;delete window.__scaraBlockWin;
-  }, { once: true });
+  }
+  window.ScaraScene.dispose=disposeScene;
+  window.addEventListener('pagehide',disposeScene,{once:true});
   // waypointPanel 위치를 #ui 렌더 후 재계산
   later(() => { if (window.__layoutWaypointArea) window.__layoutWaypointArea(); }, 200);
+  window.dispatchEvent(new Event('ScaraSceneReady'));
 }
 </script>
 <!-- ══ HW CONTROLLER PANEL (from launcher) ══ -->
@@ -3113,7 +3118,7 @@ w.occupied = true;
 
   <!-- WebSocket IP 입력 -->
   <div id="wsIpRow" style="display:flex;gap:4px;margin-bottom:4px;">
-    <input id="wsIpInput" type="text" placeholder="라즈베리파이 IP (예: 192.168.0.10)"
+    <input id="wsIpInput" type="text" placeholder="서버 주소 (예: 192.168.0.10:8080)"
       style="flex:1;padding:4px 6px;border-radius:4px;border:1px solid #336;background:#0a0a1a;color:#aac;font-size:10px;"/>
   </div>
 
@@ -3230,6 +3235,14 @@ w.occupied = true;
   </div>
 
   <div id="hwLog"></div>
+  <button class="hw-btn" id="btnShutdownApp" disabled
+    style="width:100%;margin-top:8px;border:1px solid #dc6060;background:#401f2b;color:#ffb0b0;padding:9px;">
+    ⏻ 웹·제어 프로그램 종료
+  </button>
+</div>
+<div id="applicationStopOverlay" hidden style="position:fixed;inset:0;z-index:10000;background:rgba(7,10,18,.96);color:#c8e0ee;align-content:center;text-align:center;padding:30px;font:16px sans-serif;">
+  <h2>SCARA 프로그램 종료</h2>
+  <p id="applicationStopMessage" role="status" aria-live="polite"></p>
 </div>
 
 <!-- ══ 모터 컨트롤러 + 실행 스크립트 (from launcher) ══ -->

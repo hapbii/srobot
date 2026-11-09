@@ -1,5 +1,6 @@
 """Bounded serial transport. Robot state is owned by the asyncio thread."""
 import logging
+import os
 import threading
 import time
 import serial
@@ -11,6 +12,10 @@ log = logging.getLogger('SERIAL')
 class ArduinoSerialManager:
     BAUD = 115200
 
+    @staticmethod
+    def _port_key(port):
+        return os.path.normcase(os.path.realpath(port))
+
     def __init__(self, ports=None, dashboard=None, on_line=None):
         self._ports = ports or {}
         self._dashboard = dashboard
@@ -18,6 +23,7 @@ class ArduinoSerialManager:
         self._serials, self._threads = {}, {}
         self._lock = threading.Lock()
         self._closing = threading.Event()
+        self._reconnector = None
 
     @staticmethod
     def _identify(ser, seconds=3):
@@ -38,11 +44,14 @@ class ArduinoSerialManager:
         candidates = sorted({p.device for p in serial.tools.list_ports.comports()
                              if any(x in p.device for x in ('ttyUSB', 'ttyACM', 'COM'))}
                             | set(self._ports.values()))
-        if len(set(self._ports.values())) != len(self._ports):
+        if len({self._port_key(p) for p in self._ports.values()}) != len(self._ports):
             raise ValueError('Each axis requires a different serial port')
         for port in candidates:
             if self._closing.is_set():
                 break
+            if any(ser.is_open and self._port_key(ser.port) == self._port_key(port)
+                   for ser in tuple(self._serials.values())):
+                continue
             ser = None
             try:
                 ser = serial.Serial(port, self.BAUD, timeout=0.1, write_timeout=0.5)
@@ -50,12 +59,19 @@ class ArduinoSerialManager:
                 axis = self._identify(ser)
                 if self._closing.is_set():
                     raise InterruptedError('Shutdown during port identification')
-                explicit = next((a for a, p in self._ports.items() if p == port), None)
+                explicit = next((a for a, p in self._ports.items()
+                                 if self._port_key(p) == self._port_key(port)), None)
                 if axis is None or (explicit and explicit != axis):
                     raise ValueError('Missing/mismatched READY V2; upload the matching firmware')
-                if axis in self._serials or (axis in self._ports and not explicit):
+                if self.is_connected(axis) or (axis in self._ports and not explicit):
                     raise ValueError('Duplicate axis or explicitly assigned elsewhere')
-                self._serials[axis] = ser
+                old_thread = self._threads.get(axis)
+                if old_thread:
+                    old_thread.join(timeout=1)
+                with self._lock:
+                    if self._closing.is_set():
+                        raise InterruptedError('Shutdown during port identification')
+                    self._serials[axis] = ser
                 if self._dashboard:
                     self._dashboard.set_arduino(axis, True, port)
                 self._write(axis, 'STOP')
@@ -65,12 +81,25 @@ class ArduinoSerialManager:
                                           name=f'scara-serial-{axis}')
                 self._threads[axis] = thread
                 thread.start()
+                self._on_line(axis, f'{axis.upper()} READY V2')
                 ser = None  # owned by manager now
             except Exception as exc:
                 log.warning('%s: %s', port, exc)
             finally:
                 if ser is not None:
                     ser.close()
+
+    def start_reconnect(self):
+        if self._closing.is_set() or (self._reconnector and self._reconnector.is_alive()):
+            return
+        def retry():
+            while not self._closing.wait(3):
+                try:
+                    self.connect_all()
+                except Exception:
+                    log.exception('USB rediscovery failed')
+        self._reconnector = threading.Thread(target=retry, daemon=True, name='usb-rediscovery')
+        self._reconnector.start()
 
     def _read(self, axis, ser):
         buf = bytearray()
@@ -139,9 +168,19 @@ class ArduinoSerialManager:
             return
         self.stop_all()
         self._closing.set()
-        for ser in self._serials.values():
+        for ser in tuple(self._serials.values()):
+            try:
+                # Finish queued STOP bytes before closing the USB serial device.
+                # Use a bounded output-buffer wait instead of an unbounded flush().
+                deadline = time.monotonic() + 0.25
+                while ser.is_open and ser.out_waiting and time.monotonic() < deadline:
+                    time.sleep(0.005)
+            except (OSError, serial.SerialException):
+                pass
             ser.close()
-        for thread in self._threads.values():
+        if self._reconnector and self._reconnector is not threading.current_thread():
+            self._reconnector.join(timeout=5)
+        for thread in tuple(self._threads.values()):
             if thread is not threading.current_thread():
                 thread.join(timeout=1)
         self._threads.clear()

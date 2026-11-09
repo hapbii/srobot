@@ -1,7 +1,5 @@
 """Real Chromium/WebGL and WebSocket checks; no serial ports or motors are used."""
 import asyncio
-import functools
-import http.server
 import json
 import os
 from pathlib import Path
@@ -9,14 +7,12 @@ import sys
 import threading
 import time
 from playwright.sync_api import sync_playwright
-import websockets
+from aiohttp import web
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from control_server import ScaraWSServer
+from web_app import create_app, RUNTIME
 
 ROOT=Path(__file__).resolve().parents[1]
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self,*args):pass
-
 class FakeTransport:
     def __init__(self):self.server=None;self.commands=[];self.ids={};self.positions={};self.timers=[]
     def is_connected(self,a):return True
@@ -39,15 +35,21 @@ class FakeTransport:
         for timer in self.timers:timer.cancel()
 
 def run():
-    web_http=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(QuietHandler,directory=str(ROOT)))
-    threading.Thread(target=web_http.serve_forever,daemon=True).start()
     ready=threading.Event();stop=threading.Event();info={}
     hw=FakeTransport();server=ScaraWSServer(transport=hw);hw.server=server
     async def serve():
-        async with websockets.serve(server._handler,'127.0.0.1',0) as ws:
-            info['port']=ws.sockets[0].getsockname()[1];ready.set()
-            while not stop.is_set():
-                await server._tick();await asyncio.sleep(.02)
+        app=create_app(server,discover=False)
+        info['runtime']=app[RUNTIME]
+        runner=web.AppRunner(app)
+        await runner.setup()
+        site=web.TCPSite(runner,'127.0.0.1',0)
+        await site.start()
+        info['port']=site._server.sockets[0].getsockname()[1];ready.set()
+        try:
+            while not stop.is_set() and not app[RUNTIME].stop_event.is_set():
+                await asyncio.sleep(.02)
+        finally:
+            await runner.cleanup()
     thread=threading.Thread(target=lambda:asyncio.run(serve()),daemon=True);thread.start();assert ready.wait(5)
     errors=[]
     try:
@@ -55,10 +57,8 @@ def run():
             browser=p.chromium.launch(executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe',headless=True,
                                       args=['--use-angle=swiftshader','--enable-unsafe-swiftshader'])
             context=browser.new_context(ignore_https_errors=True,viewport={'width':1440,'height':1000})
-            context.route('**/hardware.js',lambda route:route.fulfill(status=200,content_type='text/javascript',
-                body=(ROOT/'hardware.js').read_text(encoding='utf-8').replace(':8765',':'+str(info['port']))))
             page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(f'http://127.0.0.1:{web_http.server_port}/index.html')
+            page.goto(f"http://127.0.0.1:{info['port']}/index.html")
             page.wait_for_function('!!window.ScaraScene',timeout=30000)
             assert page.evaluate('ScaraScene.readPose().j2')==180
             page.locator('#helpModalClose').click()
@@ -84,7 +84,6 @@ def run():
             editor.wait_for_function('!state.running')
             assert editor.locator('#log-out').inner_text().count('Wait')==3
             # Hardware connection uses a real localhost WebSocket with fake motors.
-            page.locator('#wsIpInput').fill('127.0.0.1');page.locator('#btnConnect').click()
             page.wait_for_function('protocolReady && !SIMULATE_MODE')
             page.locator('#btnStart').click()
             page.wait_for_function('controller.running')
@@ -125,9 +124,18 @@ def run():
                 artifacts=Path(os.environ['SCARA_TEST_ARTIFACTS'])
                 artifacts.mkdir(parents=True,exist_ok=True)
                 page.screenshot(path=str(artifacts/'smoke.png'))
-            print('Browser/WebSocket checks passed; JS errors:',errors)
+            page.once('dialog',lambda dialog:dialog.accept())
+            page.locator('#btnShutdownApp').click()
+            page.wait_for_function('applicationStopped',timeout=15000)
+            assert page.locator('#applicationStopOverlay').is_visible()
+            assert page.evaluate('!window.ScaraScene && !ScaraBLE._shouldReconnect')
+            assert info['runtime'].closed
+            if os.environ.get('SCARA_TEST_ARTIFACTS'):
+                page.screenshot(path=str(Path(os.environ['SCARA_TEST_ARTIFACTS'])/'shutdown.png'))
+            assert not errors,errors
+            print('Hosted app / automatic connection / orderly shutdown checks passed; JS errors:',errors)
             browser.close()
     finally:
-        stop.set();hw.close();web_http.shutdown();web_http.server_close();thread.join(3)
+        stop.set();thread.join(10);hw.close();assert not thread.is_alive()
 
 if __name__=='__main__':run()

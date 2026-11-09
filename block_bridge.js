@@ -19,6 +19,7 @@
     if(['Stop','programFinished'].includes(d.cmd)){stopAll('블록 프로그램 정지');delete window.__scaraBlockMoveToken;return;}
     if(!['MoveL','MoveJ','MoveHome','Gripper'].includes(d.cmd))return;
     try{
+      if(applicationStopping)throw new Error('프로그램 종료 중입니다');
       if(homing)throw new Error('원점 탐색 중입니다');
       if(!window.ScaraScene)throw new Error('3D 화면 로딩 중입니다');
       if(typeof d.token!=='string'||d.token.length>80)throw new Error('명령 식별자 오류');
@@ -45,8 +46,12 @@
   const closeCheck=setInterval(()=>{
     if(blockWin?.closed){if(window.__scaraBlockMoveToken)stopAll('블록 편집기 종료');blockWin=null;delete window.__scaraBlockWin;delete window.__scaraBlockMoveToken;}
   },500);
-  window.addEventListener('pagehide',()=>{
+  let disposed=false;
+  function dispose(){
+    if(disposed)return;disposed=true;
     observer.disconnect();clearInterval(closeCheck);window.removeEventListener('message',onMessage);
     if(blockWin&&!blockWin.closed)blockWin.close();blockWin=null;
-  },{once:true});
+  }
+  window.addEventListener('pagehide',dispose,{once:true});
+  window.addEventListener('ScaraApplicationStopped',dispose,{once:true});
 })();

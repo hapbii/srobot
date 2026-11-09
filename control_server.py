@@ -6,7 +6,6 @@ import math
 import queue
 import socket
 import time
-import websockets
 from robot_config import (AXES, HOME_POSE, GEAR_RATIO, JOINT_LIMITS, MAX_SPEED,
                           MIN_SPEED, SPEED_LIMIT, ENCODER_TTL, HOME_TIMEOUT,
                           PROTOCOL_VERSION, deg_to_steps, steps_to_deg)
@@ -14,7 +13,6 @@ from serial_transport import ArduinoSerialManager
 from terminal_dashboard import TerminalDashboard
 
 log = logging.getLogger('WS_SERVER')
-WS_PORT = 8765
 JOINT_HOME_DEG = HOME_POSE
 
 def initial_motor_steps():
@@ -68,52 +66,10 @@ class ScaraWSServer:
         except queue.Full:
             self._overflow = True
 
-    def run(self):
-        self._arduino.connect_all()
-        if self._stopping:
-            self._arduino.close()
-            return
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._shutdown_event = asyncio.Event()
-        self._dash.start()
-        try:
-            self._loop.run_until_complete(self._run_ws())
-        finally:
-            self.stop()
-            tasks = asyncio.all_tasks(self._loop)
-            for task in tasks:
-                task.cancel()
-            if tasks:
-                self._loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-            self._loop.close()
-            asyncio.set_event_loop(None)
-            self._loop = None
-            self._clients.clear()
-
-    def stop(self):
-        if self._stopping:
-            return
-        self._stopping = True
-        self._arduino.close()
-        self._dash.stop()
-        if self._loop and not self._loop.is_closed() and self._shutdown_event:
-            self._loop.call_soon_threadsafe(self._shutdown_event.set)
-
-    async def _run_ws(self):
-        async with websockets.serve(self._handler, '0.0.0.0', WS_PORT, max_size=16384,
-                                    max_queue=8, ping_interval=10, ping_timeout=10):
-            ticker = asyncio.create_task(self._tick_loop())
-            try:
-                await self._shutdown_event.wait()
-            finally:
-                ticker.cancel()
-                await asyncio.gather(ticker, return_exceptions=True)
-
     async def _send(self, ws, data):
         try:
             await asyncio.wait_for(ws.send(json.dumps(data, allow_nan=False)), 0.25)
-        except (OSError, TimeoutError, websockets.exceptions.ConnectionClosed):
+        except (OSError, TimeoutError, RuntimeError):
             if ws is self._owner:
                 self._stop_motion('client send timeout')
             self._clients.discard(ws)
@@ -138,6 +94,9 @@ class ScaraWSServer:
         log.info('STOP: %s', reason)
 
     async def _handler(self, ws):
+        if self._stopping:
+            await ws.close(code=1001, reason='Server stopping')
+            return
         if len(self._clients) >= 8:
             await ws.close(code=1013, reason='Too many clients')
             return
@@ -145,11 +104,12 @@ class ScaraWSServer:
         self._dash.set_ws(len(self._clients))
         try:
             await self._send(ws, {'type': 'hello', 'server': 'scara-ws', 'protocol': PROTOCOL_VERSION,
-                                  'home_pose': HOME_POSE, 'gear_ratio': GEAR_RATIO})
+                                  'home_pose': HOME_POSE, 'gear_ratio': GEAR_RATIO,
+                                  'hardware_enabled': getattr(self, '_hardware_enabled', True)})
             await self._send(ws, self._status_payload())
             async for message in ws:
                 await self._on_message(ws, message)
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionError:
             pass
         finally:
             self._clients.discard(ws)
@@ -183,6 +143,10 @@ class ScaraWSServer:
             if not isinstance(data, dict):
                 raise ValueError('JSON object required')
             kind, request_id = data.get('type'), data.get('request_id')
+            if self._stopping and kind not in ('stop', 'ping', 'status_req'):
+                raise ValueError('server is shutting down')
+            if not getattr(self, '_hardware_enabled', True) and kind in ('joint', 'home_start', 'go_home'):
+                raise ValueError('hardware commands are disabled in demo mode')
             if request_id is not None and (not isinstance(request_id, str) or len(request_id) > 80):
                 request_id = None
                 raise ValueError('bad request id')

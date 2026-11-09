@@ -6,6 +6,32 @@ const byId = id => document.getElementById(id);
 const modeBadge=byId('modeBadge'),btnConnect=byId('btnConnect'),btnStart=byId('btnStart'),btnMode=byId('btnMode');
 let pendingMove=null, finalPose=null, lastSent='', sequence=0, homing=false;
 let protocolReady=false, lastStatus=null, lastHeartbeat=0;
+let applicationConfig=null, applicationStopping=false, applicationStopped=false;
+let stopConfirmationTimer=null;
+let hostedConfigStarted=false;
+
+function websocketUrl(endpoint){
+  if(/^wss?:\/\//i.test(endpoint))return new URL(endpoint).href;
+  const base=new URL(`${location.protocol==='https:'?'https':'http'}://${endpoint}`);
+  base.protocol=base.protocol==='https:'?'wss:':'ws:';
+  if(!base.port)base.port='8080';
+  base.pathname='/ws';return base.href;
+}
+function showApplicationStatus(message,failed=false){
+  const panel=byId('applicationStopOverlay');panel.hidden=false;
+  byId('applicationStopMessage').textContent=message;
+  panel.dataset.failed=String(failed);
+}
+function finishApplicationStop(){
+  if(applicationStopped)return;
+  applicationStopped=true;applicationStopping=true;
+  clearTimeout(stopConfirmationTimer);
+  stopAll('프로그램 종료 완료',false);ScaraBLE.disconnect(false);
+  clearInterval(hwStreamTimer);window.dispatchEvent(new Event('ScaraApplicationStopped'));
+  window.ScaraScene?.dispose();
+  byId('btnShutdownApp').disabled=true;
+  showApplicationStatus('웹·제어 프로그램이 종료되었습니다. 이 화면을 닫아도 됩니다. 라즈베리파이 전원은 운영체제를 종료한 뒤 꺼 주세요.');
+}
 
 function log(message,color='#8899aa') {
   const el=byId('hwLog'),line=document.createElement('div');
@@ -52,10 +78,12 @@ const ScaraBLE = {
   ws:null,connected:false,liveSpeed:1200,_generation:0,_shouldReconnect:false,
   _reconnectTimer:null,_connectTimer:null,_url:'',_finishConnect:null,
   connect(ip,isReconnect=false){
+    if(applicationStopping||applicationStopped)return Promise.resolve(false);
     this.disconnect(false);this._shouldReconnect=true;
     const generation=++this._generation;
-    const host=ip.replace(/^ws[s]?:\/\//,'').replace(/:\d+$/,'');
-    const url=`${location.protocol==='https:'?'wss':'ws'}://${host}:8765`;this._url=url;
+    let url;
+    try{url=websocketUrl(ip);}catch{log('서버 주소를 확인하세요');return Promise.resolve(false);}
+    this._url=url;
     return new Promise(resolve=>{
       let settled=false;
       const finish=ok=>{if(!settled){settled=true;resolve(ok);}};
@@ -70,10 +98,18 @@ const ScaraBLE = {
           if(data.type==='hello'){
             if(data.protocol!==2){log('서버와 펌웨어 V2 업데이트가 필요합니다','#ff6666');this.disconnect();finish(false);return;}
             protocolReady=true;clearTimeout(this._connectTimer);this._connectTimer=null;
-            SIMULATE_MODE=false;controller.stop();lastSent='';
+            SIMULATE_MODE=data.hardware_enabled===false;controller.stop();lastSent='';
             byId('bleDot').className='connected';byId('bleStatusText').textContent='연결됨 ✓';
             byId('bleDeviceName').textContent=url;btnConnect.textContent='✓ 연결됨 (해제)';
             updateControlUI();finish(true);log(isReconnect?'서버 재연결 완료 — 제어 시작을 눌러 재개':'서버 연결 완료');
+          }else if(data.type==='server_stopping'){
+            applicationStopping=true;this._shouldReconnect=false;
+            stopAll('서버 프로그램 종료 중',false);showApplicationStatus('모터 정지 및 USB 통신을 정리하고 있습니다…');
+          }else if(data.type==='server_stopped'){
+            finishApplicationStop();
+          }else if(data.type==='server_shutdown_failed'){
+            applicationStopping=true;this._shouldReconnect=false;stopAll('서버 종료 확인 실패',false);
+            showApplicationStatus('종료를 확인하지 못했습니다. 전원을 끄기 전에 SSH에서 서비스 상태를 확인하세요.',true);
           }else if(data.type==='status'){
             lastStatus=data;
             if(data.homing)homing=true;
@@ -106,7 +142,8 @@ const ScaraBLE = {
         this.connected=false;protocolReady=false;this.ws=null;finish(false);
         stopAll('연결 끊김',false);SIMULATE_MODE=true;updateControlUI();
         byId('bleDot').className='';byId('bleStatusText').textContent='WebSocket 미연결';btnConnect.textContent='🟢 WS 연결';
-        if(this._shouldReconnect)this._reconnectTimer=setTimeout(()=>this.connect(ip,true),3000);
+        if(applicationStopping&&!applicationStopped)showApplicationStatus('서버 연결이 닫혔지만 종료 완료 응답을 받지 못했습니다. SSH에서 서비스 상태를 확인하세요.',true);
+        if(this._shouldReconnect&&!applicationStopping)this._reconnectTimer=setTimeout(()=>this.connect(ip,true),3000);
       };
       ws.onerror=()=>finish(false);
       this._connectTimer=setTimeout(()=>{finish(false);ws.close();},5000);
@@ -149,6 +186,7 @@ function updateFeedback(){
   }
 }
 const hwStreamTimer=setInterval(()=>{
+  if(applicationStopped)return;
   updateFeedback();
   if(SIMULATE_MODE||!ScaraBLE.connected||!protocolReady)return;
   const now=performance.now();
@@ -173,6 +211,7 @@ btnConnect.addEventListener('click',async()=>{
   finally{btnConnect.disabled=false;}
 });
 btnStart.addEventListener('click',()=>{
+  if(applicationStopping)return;
   if(controller.running||homing){stopAll();return;}
   if(!SIMULATE_MODE&&!protocolReady){log('V2 서버 연결이 필요합니다');return;}
   controller.start();lastSent='';updateControlUI();
@@ -200,6 +239,44 @@ byId('btnGoHome').addEventListener('click',()=>{
     resolve:()=>{window.ScaraScene?.setPose(ScaraCore.HOME);controller.stop();updateControlUI();},reject:()=>{}};
   ScaraBLE._send({type:'go_home',speed:getManualSpeed(),request_id});updateControlUI();
 });
+byId('btnShutdownApp').addEventListener('click',async()=>{
+  if(!applicationConfig||applicationStopping)return;
+  if(!confirm('모터를 정지하고 라즈베리파이의 웹·제어 프로그램을 모두 종료할까요? 다시 사용하려면 서비스를 시작해야 합니다.'))return;
+  applicationStopping=true;ScaraBLE._shouldReconnect=false;
+  stopAll('프로그램 종료 요청');byId('btnShutdownApp').disabled=true;
+  showApplicationStatus('프로그램 종료를 요청하고 있습니다…');
+  try{
+    const response=await fetch('/api/shutdown',{method:'POST',headers:{'Content-Type':'application/json','X-SRobot-Token':applicationConfig.shutdown_token},body:'{}',signal:AbortSignal.timeout(5000)});
+    if(!response.ok)throw new Error('종료 요청 거절 ('+response.status+')');
+    // HTTP 202 only means accepted. Completion requires the final WS event.
+    if(!applicationStopped)stopConfirmationTimer=setTimeout(()=>{if(!applicationStopped)showApplicationStatus('종료 완료를 확인하지 못했습니다. SSH에서 서비스를 확인하세요.',true);},15000);
+  }catch(error){
+    if(applicationStopped)return;
+    showApplicationStatus(error.message+'. SSH에서 서비스 상태를 확인하세요.',true);
+  }
+});
+async function connectHostedApplication(){
+  if(hostedConfigStarted)return;
+  hostedConfigStarted=true;
+  if(!/^https?:$/.test(location.protocol))return;
+  try{
+    const response=await fetch('/api/config',{cache:'no-store',signal:AbortSignal.timeout(10000)});
+    if(!response.ok)return; // Separate static-file hosting still supports manual connection.
+    const config=await response.json();
+    if(config.protocol!==2||config.websocket_path!=='/ws'||typeof config.shutdown_token!=='string')return;
+    applicationConfig=config;byId('btnShutdownApp').disabled=false;
+    if(config.state!=='running'){applicationStopping=true;showApplicationStatus('서버 프로그램이 종료 중입니다.');return;}
+    const url=new URL(config.websocket_path,location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
+    byId('wsIpInput').value=location.host;
+    byId('wsIpRow').style.display='none';
+    await ScaraBLE.connect(url.href);
+  }catch(error){log('서버 자동 연결: '+error.message);}
+}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAll('화면 비활성화');});
 window.addEventListener('pagehide',()=>{stopAll('페이지 종료');clearInterval(hwStreamTimer);ScaraBLE.disconnect(false);},{once:true});
 getManualSpeed();updateControlUI();log('준비 완료. 서버 연결 후 제어 시작을 누르세요.');
+if(window.ScaraScene)connectHostedApplication();
+else window.addEventListener('ScaraSceneReady',connectHostedApplication,{once:true});
+// Keep server controls available even if WebGL initialization fails.
+if(document.readyState==='complete')connectHostedApplication();
+else window.addEventListener('load',connectHostedApplication,{once:true});
